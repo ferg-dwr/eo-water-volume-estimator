@@ -1,0 +1,45 @@
+"""Validate the volume core against a shape with a known analytical volume."""
+
+import numpy as np
+
+from eo_water_volume import estimate_volume, wse_from_perimeter, summarize
+
+
+def _paraboloid_bowl(px=30.0, r_target=3000.0, z0=1.0, h=5.0, n=401):
+    """Bed z = z0 + k r^2 filled to level h. Analytical water volume:
+    V = pi (h - z0)^2 / (2k). Sized so the pool spans many pixels."""
+    k = (h - z0) / r_target**2
+    xs = (np.arange(n) - n // 2) * px
+    X, Y = np.meshgrid(xs, xs)
+    bed = z0 + k * (X**2 + Y**2)
+    water = (bed < h).astype("float64")
+    v_true = np.pi * (h - z0) ** 2 / (2 * k)
+    return bed, water, h, v_true, px
+
+
+def test_volume_matches_analytical():
+    bed, water, h, v_true, px = _paraboloid_bowl()
+    v_est = estimate_volume(bed, water, wse=h, pixel_area=px * px)
+    assert abs(v_est - v_true) / v_true < 0.01
+
+
+def test_perimeter_wse_recovers_fill_level():
+    bed, water, h, v_true, px = _paraboloid_bowl()
+    wse_hat = wse_from_perimeter(bed, water)
+    assert abs(wse_hat - h) < 0.1
+    v_blind = estimate_volume(bed, water, wse=wse_hat, pixel_area=px * px)
+    assert abs(v_blind - v_true) / v_true < 0.05
+
+
+def test_dry_and_nodata_contribute_nothing():
+    bed = np.array([[0.0, 10.0], [np.nan, 2.0]])
+    water = np.array([[1.0, 1.0], [1.0, 0.0]])  # dry, high, nodata, unmasked
+    assert estimate_volume(bed, water, wse=5.0, pixel_area=1.0) == 5.0
+
+
+def test_summary_units():
+    bed, water, h, v_true, px = _paraboloid_bowl()
+    s = summarize(bed, water, h, px * px)
+    assert s["volume_m3"] > 0
+    assert abs(s["volume_acre_ft"] - s["volume_m3"] / 1233.4818375475) < 1e-6
+    assert 0 < s["mean_depth_m"] <= s["max_depth_m"]

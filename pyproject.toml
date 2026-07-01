@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eo-water-volume-estimator"
+version = "0.1.0"
+description = "Water-volume estimation for the California Delta from EO water masks and a bathymetric DEM"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Fernando Romero Galvan", email = "fernando.romero-galvan@water.ca.gov" }]
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+io = ["rasterio>=1.3"]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eo_water_volume"]
