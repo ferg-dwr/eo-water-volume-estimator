@@ -72,3 +72,9 @@ logs/
 
 # Claude project management
 .claude/
+
+# Geospatial data (granules, DEMs) — never commit rasters
+*.tif
+*.tiff
+*.nc
+data/
