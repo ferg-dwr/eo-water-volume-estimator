@@ -112,6 +112,7 @@ def summarize(
         "invalid_fraction": invalid_fraction,
     }
 
+
 def volume_map(
     bed: np.ndarray,
     water: np.ndarray,
