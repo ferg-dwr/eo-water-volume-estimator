@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "eo-water-volume-estimator"
-version = "0.1.0"
+version = "0.2.0"
 description = "Water-volume estimation for the California Delta from EO water masks and a bathymetric DEM"
 readme = "README.md"
 requires-python = ">=3.11"
