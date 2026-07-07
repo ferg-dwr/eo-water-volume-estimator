@@ -89,7 +89,16 @@ def fetch(aoi: AOI) -> Path:
 
 
 def analyze(wtr_path: Path, dem_path: Path, aoi_geom: dict, out_dir: Path) -> dict:
-    """Volume within the AOI polygon; writes a georeferenced volume map."""
+    """Volume, depth, and water-fraction products within the AOI polygon.
+
+    Three single-band GeoTIFFs with NODATA=-9999 declared in metadata:
+      *_volume : m^3 per pixel; 0.0 is a real value (analyzed, no water);
+                 nodata outside the AOI and where the sensor gave no answer
+      *_depth  : water-column depth (wse - bed, m) only where water was
+                 detected; nodata elsewhere -- "no water" is not "0 m of water"
+      *_water  : DSWx-derived water fraction (0 / 0.5 / 1); nodata outside the
+                 AOI and at invalid (cloud/HAND/layover) pixels
+    """
     from rasterio.features import geometry_mask
     from rasterio.warp import transform_geom
 
@@ -109,34 +118,48 @@ def analyze(wtr_path: Path, dem_path: Path, aoi_geom: dict, out_dir: Path) -> di
         raise SystemExit("AOI polygon does not intersect this granule.")
 
     water_aoi = np.where(inside, water, 0.0)
-    coverage = inside.mean()
 
     wse = wse_from_perimeter(bed, water_aoi)
     stats = summarize(bed, water_aoi, wse, pixel_area, invalid=(invalid & inside))
     # Honest denominators: fraction of *AOI* pixels the sensor couldn't see,
     # not fraction of the whole scene (which dilutes the metric).
     stats["invalid_fraction_aoi"] = float(invalid[inside].mean())
-    stats["aoi_pixel_share_of_scene"] = float(coverage)
+    stats["aoi_pixel_share_of_scene"] = float(inside.mean())
+
+    # --- three products, shared nodata semantics -----------------------------
+    NODATA = -9999.0
+    answered = inside & ~invalid          # sensor gave an answer, in the AOI
 
     vmap = volume_map(bed, water_aoi, wse, pixel_area)
+    vmap = np.where(answered, vmap, NODATA)
+
+    depth = np.clip(wse - bed, 0.0, None)
+    wet = answered & (water_aoi > 0) & np.isfinite(bed)
+    depth = np.where(wet, depth, NODATA)  # depth only where water was detected
+
+    frac = np.where(answered, water_aoi, NODATA)
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_tif = out_dir / f"yolo_volume_{wtr_path.stem}.tif"
-    write_geotiff(
-        vmap,
-        mask_raster,
-        str(out_tif),
-        band_name="water_volume_m3",
-        units="m^3",
-        tags={
-            "aoi": "yolo-bypass-boundary",
-            "wse_m_navd88": stats["wse_m"],
-            "wse_method": "mask-perimeter median (gauge stage pending, M3)",
-            "invalid_fraction_aoi": stats["invalid_fraction_aoi"],
-            "source_granule": wtr_path.name,
-            "dem": dem_path.name,
-        },
-    )
-    stats["volume_map"] = str(out_tif)
+    common_tags = {
+        "aoi": "yolo-bypass-boundary",
+        "wse_m_navd88": stats["wse_m"],
+        "wse_method": "mask-perimeter median (gauge stage pending, M3)",
+        "invalid_fraction_aoi": stats["invalid_fraction_aoi"],
+        "source_granule": wtr_path.name,
+        "dem": dem_path.name,
+    }
+    products = {
+        "volume": (vmap, "water_volume_m3", "m^3"),
+        "depth": (depth, "water_depth_m", "m"),
+        "water": (frac, "water_fraction", "fraction"),
+    }
+    for key, (grid, band, unit) in products.items():
+        out_tif = out_dir / f"yolo_{key}_{wtr_path.stem}.tif"
+        write_geotiff(
+            grid, mask_raster, str(out_tif),
+            nodata=NODATA, band_name=band, units=unit, tags=common_tags,
+        )
+        stats[f"{key}_map"] = str(out_tif)
     return stats
 
 
