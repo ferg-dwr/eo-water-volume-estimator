@@ -33,7 +33,7 @@ def test_perimeter_wse_recovers_fill_level():
 
 def test_dry_and_nodata_contribute_nothing():
     bed = np.array([[0.0, 10.0], [np.nan, 2.0]])
-    water = np.array([[1.0, 1.0], [1.0, 0.0]])   # dry, high, nodata, unmasked
+    water = np.array([[1.0, 1.0], [1.0, 0.0]])  # dry, high, nodata, unmasked
     assert estimate_volume(bed, water, wse=5.0, pixel_area=1.0) == 5.0
 
 
@@ -57,6 +57,21 @@ def test_fractional_water_scales_volume():
 
 def test_fraction_out_of_range_is_clipped():
     bed = np.zeros((1, 2))
-    water = np.array([[1.5, -0.3]])   # clipped to 1.0 and 0.0
+    water = np.array([[1.5, -0.3]])  # clipped to 1.0 and 0.0
     v = estimate_volume(bed, water, wse=1.0, pixel_area=1.0)
-    assert v == 1.0   # only pixel 0 contributes: depth 1 * frac 1 * area 1
+    assert v == 1.0  # only pixel 0 contributes: depth 1 * frac 1 * area 1
+
+
+def test_summarize_reports_invalid_fraction():
+    bed = np.zeros((2, 2))
+    water = np.array([[1.0, 0.0], [0.0, 0.0]])
+    invalid = np.array([[False, True], [True, False]])  # 2 of 4 pixels
+    s = summarize(bed, water, wse=1.0, pixel_area=1.0, invalid=invalid)
+    assert s["invalid_fraction"] == 0.5
+
+
+def test_summarize_without_invalid_is_none_not_zero():
+    bed = np.zeros((1, 1))
+    water = np.ones((1, 1))
+    s = summarize(bed, water, wse=1.0, pixel_area=1.0)
+    assert s["invalid_fraction"] is None  # "not assessed" != "assessed clean"
