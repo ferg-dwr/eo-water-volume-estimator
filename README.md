@@ -1,92 +1,161 @@
 # eo-water-volume-estimator
 
-Estimate surface-water **volume** for an area of the California Delta from an
-Earth-observation water mask and a bathymetric DEM. Built as operational
-decision-support tooling at the California Department of Water Resources (DWR);
-decoupled from [`dwr-eo-toolkit`](https://github.com/ferg-dwr/dwr-eo-toolkit),
-which handles data acquisition.
+**How much water is in the Yolo Bypass right now?** This repository answers
+that question using satellites — no field visit required.
 
-The whole model is one masked reduction — the volume of water under a planar
-surface at elevation `wse`, integrated against the bed:
+It combines a NASA satellite map of *where* water is with the State of
+California's own map of *how deep the ground is*, and integrates the two into
+an estimate of **how much water** is present: a single number (in acre-feet)
+plus maps you can open in any GIS.
 
-    V = pixel_area * Σ ( water_i × max(wse − bed_i, 0) )
+Built at the California Department of Water Resources (DWR) as operational
+decision-support tooling. No remote-sensing background is assumed below.
 
-where `water` is a per-pixel coverage fraction in [0, 1] and `bed` is the DEM.
+---
 
-## Data sources
+## The idea, in plain language
 
-- **Water mask:** [OPERA DSWx-S1](https://podaac.jpl.nasa.gov/dataset/OPERA_L3_DSWX-S1_V1)
-  (Dynamic Surface Water Extent from Sentinel-1, Version 1). All-weather SAR
-  water classification at 30 m on the MGRS grid, 6–12 day revisit; maps open
-  water bodies larger than 3 ha and 200 m wide. Forward production since
-  Sept 2024. Product spec: [JPL OPERA DSWx suite](https://www.jpl.nasa.gov/go/opera/products/dswx-product-suite/).
-  The optical sibling, [DSWx-HLS](https://podaac.jpl.nasa.gov/dataset/OPERA_L3_DSWX-HLS_V1),
-  reaches back to April 2023 for clear-sky work.
-- **Bed elevation:** [San Francisco Bay and Sacramento–San Joaquin Delta DEM
-  for Modeling, v4.3](https://data.cnra.ca.gov/dataset/san-francisco-bay-and-sacramento-san-joaquin-delta-dem-for-modeling-version-4-3)
-  (CNRA open-data portal; v4.2 is superseded but archived). Seamless
-  bathymetric + topographic elevation, NAVD88.
+Think of the Yolo Bypass as a giant, oddly-shaped bathtub.
 
-## Install
+To know how much water is in a bathtub you need three things: the **shape of
+the tub** (how deep is the bottom at every point?), **where the water is**
+(which parts of the tub are wet?), and the **height of the waterline**.
+Multiply it out and you have a volume. That is the entire method:
+
+```
+volume = pixel_area × Σ water_fraction × max(water_surface − bed_elevation, 0)
+```
+
+Reading that term by term:
+
+- The landscape is divided into **pixels** — 30 m × 30 m squares (900 m² each).
+- **water_fraction** — how much of each pixel is wet (0 = dry, 1 = fully wet),
+  from a satellite.
+- **bed_elevation** — the height of the ground (or river/lake bottom) in that
+  pixel, from an elevation model.
+- **water_surface** — the elevation of the water's top. Surface minus bed is
+  depth; the `max(…, 0)` just says dry ground holds no water.
+- Sum over all pixels, multiply by pixel area: volume in cubic meters
+  (reported in acre-feet too, the unit California water managers use).
+
+## Ingredient 1 — where the water is (NASA OPERA DSWx-S1)
+
+Most satellite cameras can't see through clouds — a problem in a Delta winter.
+So we use a **radar** satellite (Sentinel-1): radar supplies its own
+illumination and passes through clouds and darkness. Calm water reflects the
+radar pulse away like a mirror, so water shows up distinctly.
+
+We do **not** classify the radar imagery ourselves. NASA already publishes a
+validated, analysis-ready water map called
+[OPERA DSWx-S1](https://podaac.jpl.nasa.gov/dataset/OPERA_L3_DSWX-S1_V1)
+("Dynamic Surface Water eXtent from Sentinel-1"): every 30 m pixel is labeled
+**open water**, **partial water** (e.g. flooded vegetation), **not water**, or
+**invalid** (the sensor couldn't get an answer there). New coverage arrives
+every 6–12 days, free.
+
+One built-in limit: the product maps open water bodies larger than ~3 hectares
+and ~200 m across — broad floodplains show up well; narrow channels don't.
+
+## Ingredient 2 — how deep the ground is (CNRA Bay-Delta DEM)
+
+A **DEM** (digital elevation model) is a grid of ground heights. DWR and USGS
+maintain a seamless 10 m DEM of the whole Delta —
+[SF Bay & Sacramento–San Joaquin Delta DEM for Modeling, v4.3](https://data.cnra.ca.gov/dataset/san-francisco-bay-and-sacramento-san-joaquin-delta-dem-for-modeling-version-4-3)
+— that fuses boat-based **bathymetry** (underwater depth soundings) with
+airborne lidar for dry land. Elevations are in meters above **NAVD88**, the
+standard "zero point" US agencies use so different datasets agree on what
+"elevation 0 m" means.
+
+This dataset is the quiet superpower of the project: for the Delta, the "how
+deep is the tub" half of the problem is already solved and maintained by the
+State.
+
+## Ingredient 3 — the waterline
+
+The one number neither dataset provides directly is the **water-surface
+elevation (WSE)**. For now we estimate it from the water's edge: depth is zero
+exactly at a shoreline, so the ground elevation along the satellite-detected
+water boundary approximates the water surface. It's self-contained and needs
+no field data — and it is also the largest error source (see limitations).
+Replacing it with real river-gauge readings is the next milestone.
+
+## What one run produces
+
+A summary (volume, wet area, mean/max depth, and an honesty metric — the
+fraction of pixels the sensor couldn't classify) plus **three GeoTIFF maps**,
+each openable in QGIS/ArcGIS:
+
+| product | meaning | no-data rule |
+|---|---|---|
+| `*_water_*.tif`  | water fraction the satellite saw (0 / 0.5 / 1) | "sensor couldn't see" is no-data — never counted as dry |
+| `*_depth_*.tif`  | water depth in meters, only where water was detected | "no water" is no-data — it is not "0 m of water" |
+| `*_volume_*.tif` | cubic meters of water per pixel | summing its valid pixels reproduces the reported total exactly |
+
+Every file carries its provenance in metadata: source granule, DEM version,
+how the WSE was estimated, and the invalid-pixel fraction.
+
+## First real result
+
+**January 15, 2026 — 76,249 acre-feet (94.1 million m³) of water in the Yolo
+Bypass**, over a detected wet area of 77 km². The spatial pattern matches the
+bypass's known hydrology — water in the perennial Tule Canal / Toe Drain along
+the east side and the tidal south end — i.e. a bypass between flood pulses.
+
+## Honest limitations (read before trusting a number)
+
+1. **One flat waterline.** We assume a single WSE across a 59 km system whose
+   south end is tidal. Sensitivity is quantified: each 0.5 m of WSE error
+   moves the estimate by ~38 million m³ (~±40%). Gauge-based WSE is the fix,
+   and it's next.
+2. **"Partial water" is a stated guess.** The satellite class carries no
+   percentage; we count those pixels as half wet (`PARTIAL_WATER_FRACTION =
+   0.5`) — a documented, tunable heuristic, not a measurement.
+3. **Narrow channels are invisible** below the ~3 ha / 200 m product floor.
+4. **Pattern-validated only, so far.** The map agrees with known hydrology,
+   but no independent quantitative validation has been run yet. That is the
+   next milestone, not a footnote.
+
+## Install & run
 
 ```bash
-pip install -e .            # core: pure numpy
-pip install -e ".[io]"      # + rasterio (reading/aligning GeoTIFFs)
-pip install -e ".[dev]"     # + pytest
+pip install -e ".[io,eo,dev]"   # numpy core + rasterio + earthaccess + pytest
+python -m pytest -q             # 24 tests
 ```
 
-## Quickstart
+To reproduce the Yolo run you need (a) a free
+[NASA Earthdata login](https://urs.earthdata.nasa.gov/), (b) the CNRA DEM
+v4.3 GeoTIFF on disk, and (c) an AOI polygon (GeoJSON). Then:
 
-With a DSWx `B01_WTR` GeoTIFF and the DEM on disk:
-
-```python
-from eo_water_volume import estimate_volume, wse_from_perimeter, summarize
-from eo_water_volume.sources import LocalFileSource
-
-src = LocalFileSource(mask_path="B01_WTR.tif", dem_path="dem_bay_delta_10m.tif")
-water, bed, pixel_area = src.load_aligned()   # DEM reprojected onto the mask grid
-
-wse = wse_from_perimeter(bed, water)          # WSE from the mask shoreline
-print(summarize(bed, water, wse, pixel_area)) # volume in m^3 and acre-feet
+```bash
+python examples/run_yolo_volume.py
 ```
 
-Swap `wse_from_perimeter(...)` for a gauge stage (same NAVD88 datum) whenever
-one is available — the perimeter estimate is the self-contained fallback.
+The first run downloads one satellite granule (cached afterward) and writes
+the summary plus the three GeoTIFFs to `data/outputs/`.
 
-## Assumptions and honest caveats
+## How the code is organized
+```
+src/eo_water_volume/
+volume.py     the math: volume, per-pixel volume map, shoreline WSE (pure numpy)
+sources.py    reading & aligning rasters; satellite classes -> water fractions
+outputs.py    writing georeferenced GeoTIFFs with metadata
+contract.py   the data-request format shared with dwr-eo-toolkit
+tests/          24 tests, incl. validation against an exact analytical solution
+examples/       the end-to-end Yolo Bypass run
+```
 
-- **Planar pool.** One scalar water-surface elevation per AOI. Reasonable for a
-  quasi-static floodplain or managed-inundation area; wrong for tidal channel
-  networks, where WSE varies in space and sub-daily.
-- **Partial water is a heuristic.** DSWx-S1's partial-surface-water class is
-  categorical — it carries no measured sub-pixel fraction. `PARTIAL_WATER_FRACTION`
-  (default 0.5) is an explicit, tunable knob, not a measurement.
-- **Invalid pixels currently count as dry.** Cloud/layover/shadow-masked pixels
-  (codes ≥ 252) contribute zero volume, silently. Until per-run invalid-fraction
-  reporting lands, treat absolute numbers over partially masked scenes with care.
-- **Mask floor.** DSWx-S1 resolves open water ≥ 3 ha and ≥ 200 m wide; narrow
-  Delta channels will not appear.
+The volume math is verified against a paraboloid "bowl" with a known
+closed-form volume (agreement < 1%).
 
 ## Relationship to dwr-eo-toolkit
 
-The model declares its data needs via `eo_water_volume.contract` —
-`requests_for_volume(...)` emits request objects whose
-`to_toolkit_payload()` is exactly the JSON body of the toolkit's
-`POST /api/v1/downloads`. Neither package imports the other; the JSON shape is
-the entire coupling. Any fetcher (the toolkit, `earthaccess` directly, or a
-curl command) can fulfil a request.
-
-## Tests
-
-```bash
-python -m pytest -q
-```
-
-The volume core is validated against a paraboloid with a closed-form analytical
-volume (agreement < 1%); the contract tests pin the toolkit payload shape.
+[`dwr-eo-toolkit`](https://github.com/ferg-dwr/dwr-eo-toolkit) is DWR's
+satellite-data acquisition service. The two repos deliberately share **no
+code** — only a data-request format (`contract.py`) that matches the toolkit's
+download API, so either side can evolve independently.
 
 ## Status
 
-Early development. Current scope: single-granule, single-pool volume from
-OPERA DSWx-S1 + the CNRA DEM. Gauge-stage WSE, SWOT `water_fraction`
-integration, and the toolkit adapter are planned follow-ons.
+Early development (v0.x). Working end to end; next milestones: gauge-based
+water levels, quantitative validation against DWR's inundation tooling, SWOT
+altimetry, and toolkit integration.
