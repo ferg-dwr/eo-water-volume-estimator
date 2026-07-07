@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "eo-water-volume-estimator"
+version: 0.2.0
+date-released: 2026-07-07
+authors:
+  - family-names: "Romero Galvan"
+    given-names: "Fernando Emiliano"
+    email: "fernando.romero-galvan@water.ca.gov"
+    affiliation: "California Department of Water Resources / NASA Postdoctoral Program"
+    orcid: "https://orcid.org/0000-0003-0664-8169"   # add yours
+repository-code: "https://github.com/ferg-dwr/eo-water-volume-estimator"
+license: MIT
+keywords:
+  - remote sensing
+  - surface water
+  - water volume
+  - OPERA DSWx
+  - Sacramento-San Joaquin Delta
+abstract: >-
+  Estimates surface-water volume for areas of the California Delta by
+  combining NASA OPERA DSWx-S1 water-extent maps with the CNRA Bay-Delta
+  bathymetric DEM, producing volume, depth, and water-fraction GeoTIFFs
+  with quantified uncertainty.
