@@ -75,3 +75,24 @@ def test_summarize_without_invalid_is_none_not_zero():
     water = np.ones((1, 1))
     s = summarize(bed, water, wse=1.0, pixel_area=1.0)
     assert s["invalid_fraction"] is None  # "not assessed" != "assessed clean"
+
+
+def test_volume_map_sums_to_estimate():
+    from eo_water_volume import volume_map
+
+    bed, water, h, v_true, px = _paraboloid_bowl()
+    vmap = volume_map(bed, water, wse=h, pixel_area=px * px)
+    assert vmap.shape == bed.shape
+    assert (
+        abs(vmap.sum() - estimate_volume(bed, water, wse=h, pixel_area=px * px)) < 1e-6
+    )
+
+
+def test_volume_map_per_pixel_values():
+    from eo_water_volume import volume_map
+
+    bed = np.array([[0.0, 10.0], [np.nan, 1.0]])
+    water = np.array([[1.0, 1.0], [1.0, 0.5]])
+    vmap = volume_map(bed, water, wse=2.0, pixel_area=10.0)
+    # wet+shallow: 10*1*2=20 | dry (bed above wse): 0 | nodata: 0 | half-wet: 10*0.5*1=5
+    assert vmap.tolist() == [[20.0, 0.0], [0.0, 5.0]]
