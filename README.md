@@ -1,3 +1,4 @@
+![CI](https://github.com/ferg-dwr/eo-water-volume-estimator/actions/workflows/ci.yml/badge.svg?branch=dev)
 # eo-water-volume-estimator
 
 **How much water is in the Yolo Bypass right now?** This repository answers
