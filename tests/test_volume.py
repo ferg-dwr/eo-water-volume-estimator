@@ -33,7 +33,7 @@ def test_perimeter_wse_recovers_fill_level():
 
 def test_dry_and_nodata_contribute_nothing():
     bed = np.array([[0.0, 10.0], [np.nan, 2.0]])
-    water = np.array([[1.0, 1.0], [1.0, 0.0]])  # dry, high, nodata, unmasked
+    water = np.array([[1.0, 1.0], [1.0, 0.0]])   # dry, high, nodata, unmasked
     assert estimate_volume(bed, water, wse=5.0, pixel_area=1.0) == 5.0
 
 
@@ -43,3 +43,20 @@ def test_summary_units():
     assert s["volume_m3"] > 0
     assert abs(s["volume_acre_ft"] - s["volume_m3"] / 1233.4818375475) < 1e-6
     assert 0 < s["mean_depth_m"] <= s["max_depth_m"]
+
+
+def test_fractional_water_scales_volume():
+    # Flat bed at 0, wse=2 -> uniform depth 2. Fractional coverage should scale
+    # volume linearly: V = area * depth * sum(fractions).
+    bed = np.zeros((1, 4))
+    water = np.array([[0.0, 0.25, 0.5, 1.0]])
+    area = 100.0
+    v = estimate_volume(bed, water, wse=2.0, pixel_area=area)
+    assert abs(v - area * 2.0 * (0.0 + 0.25 + 0.5 + 1.0)) < 1e-9
+
+
+def test_fraction_out_of_range_is_clipped():
+    bed = np.zeros((1, 2))
+    water = np.array([[1.5, -0.3]])   # clipped to 1.0 and 0.0
+    v = estimate_volume(bed, water, wse=1.0, pixel_area=1.0)
+    assert v == 1.0   # only pixel 0 contributes: depth 1 * frac 1 * area 1

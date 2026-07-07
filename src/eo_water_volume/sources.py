@@ -12,14 +12,43 @@ package -- does not require the `[io]` extra.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
 
-# OPERA DSWx-S1 WTR classes counted as water: 1 = open water, 2 = partial /
-# inundated vegetation. Values >= 252 are invalid (HAND/layover/shadow/cloud/fill).
-WATER_CLASSES: tuple[int, ...] = (1, 2)
+# Per-pixel water fraction assigned to each OPERA DSWx-S1 WTR class.
+#   1 = open water        -> fully wet
+#   2 = partial water / inundated vegetation
+# IMPORTANT: DSWx-S1 flags class 2 *categorically* -- it carries no sub-pixel
+# fraction -- so PARTIAL_WATER_FRACTION below is a HEURISTIC, not a measurement.
+# It is a single visible knob: set it to 1.0 to treat partial as fully wet
+# (over-estimates), 0.0 to drop it and keep open water only (under-estimates),
+# or leave the nominal 0.5. A *quantitative* sub-pixel fraction comes later from
+# SWOT's water_fraction band, not from DSWx-S1.
+PARTIAL_WATER_FRACTION: float = 0.5
+DEFAULT_WATER_FRACTIONS: dict[int, float] = {1: 1.0, 2: PARTIAL_WATER_FRACTION}
+
+# Values >= 252 are invalid (HAND / layover-shadow / cloud / fill). They are
+# absent from the mapping above, so they resolve to 0.0 (dry) -- see ROADMAP for
+# why that silent drop needs explicit invalid-fraction accounting before a run's
+# number is trustworthy.
 INVALID_FROM: int = 252
+
+
+def water_fraction_from_classes(
+    wtr: np.ndarray,
+    fractions: Mapping[int, float] = DEFAULT_WATER_FRACTIONS,
+) -> np.ndarray:
+    """Map DSWx WTR class codes to a per-pixel water fraction in [0, 1].
+
+    Classes absent from `fractions` -- including invalid codes (>= 252) -- map to
+    0.0 (dry). Pure numpy; no rasterio, so it is unit-testable without a GeoTIFF.
+    """
+    out = np.zeros(wtr.shape, dtype="float64")
+    for cls, frac in fractions.items():
+        out[wtr == cls] = frac
+    return out
 
 
 @dataclass
@@ -56,24 +85,24 @@ class LocalFileSource(WaterDataSource):
         self.dem_path = dem_path
 
     def water_mask(self) -> Raster:
-        import rasterio as rio
+        import rasterio
 
-        with rio.open(self.mask_path) as src:
+        with rasterio.open(self.mask_path) as src:
             return Raster(src.read(1), src.transform, src.crs)
 
     def bathymetry(self, like: Raster | None = None) -> Raster:
-        import rasterio as rio
-        from rio.enums import Resampling
-        from rio.warp import reproject
+        import rasterio
+        from rasterio.enums import Resampling
+        from rasterio.warp import reproject
 
-        with rio.open(self.dem_path) as dem:
+        with rasterio.open(self.dem_path) as dem:
             if like is None:
                 return Raster(dem.read(1).astype("float64"), dem.transform, dem.crs)
             # Average-resample onto the mask grid: the coarse cell keeps the mean
             # bed elevation, which is exactly what the volume integral needs.
             dst = np.full(like.data.shape, np.nan, dtype="float64")
             reproject(
-                source=rio.band(dem, 1),
+                source=rasterio.band(dem, 1),
                 destination=dst,
                 src_transform=dem.transform,
                 src_crs=dem.crs,
@@ -84,14 +113,17 @@ class LocalFileSource(WaterDataSource):
             )
             return Raster(dst, like.transform, like.crs)
 
-    def load_aligned(self) -> tuple[np.ndarray, np.ndarray, float]:
+    def load_aligned(
+        self,
+        fractions: Mapping[int, float] = DEFAULT_WATER_FRACTIONS,
+    ) -> tuple[np.ndarray, np.ndarray, float]:
         """Return (water, bed, pixel_area) ready for volume.estimate_volume().
 
-        `water` is 1.0 for water classes, 0.0 otherwise. Invalid OPERA pixels
-        currently map to 0.0 (treated as dry) -- see ROADMAP for why that needs
-        explicit invalid-fraction accounting before the number is trustworthy.
+        `water` is a per-pixel fraction in [0, 1] from `fractions` (open water 1.0,
+        partial a heuristic, invalid 0.0). Pass a custom mapping to change how the
+        partial class is weighted, e.g. {1: 1.0} for open water only.
         """
         mask = self.water_mask()
         bed = self.bathymetry(like=mask)
-        water = np.isin(mask.data, WATER_CLASSES).astype("float64")
+        water = water_fraction_from_classes(mask.data, fractions)
         return water, bed.data, mask.pixel_area
