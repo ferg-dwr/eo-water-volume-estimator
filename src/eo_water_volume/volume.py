@@ -43,16 +43,8 @@ def estimate_volume(
     float
         Volume in m^3.
     """
-    bed = np.asarray(bed, dtype="float64")
-    frac = np.clip(np.asarray(water, dtype="float64"), 0.0, 1.0)
-
-    depth = wse - bed  # signed depth
-    np.clip(depth, 0.0, None, out=depth)  # dry ground -> 0
-    depth[~np.isfinite(bed)] = 0.0  # no-data DEM contributes nothing
-    frac[~np.isfinite(frac)] = 0.0
-
-    # The whole model: masked dot product, scaled by pixel area.
-    return float(pixel_area * np.sum(frac * depth))
+    # Delegates to volume_map so the scalar and the map can never drift.
+    return float(np.sum(volume_map(bed, water, wse, pixel_area)))
 
 
 def wse_from_perimeter(bed: np.ndarray, water: np.ndarray) -> float:
@@ -119,3 +111,27 @@ def summarize(
         "max_depth_m": float(np.nanmax(depth)) if depth.size else 0.0,
         "invalid_fraction": invalid_fraction,
     }
+
+def volume_map(
+    bed: np.ndarray,
+    water: np.ndarray,
+    wse: float,
+    pixel_area: float,
+) -> np.ndarray:
+    """Per-pixel water volume (m^3): the estimate_volume() reduction, un-summed.
+
+    Returns a 2-D float64 grid where cell (i, j) holds
+    pixel_area * water_ij * max(wse - bed_ij, 0); dry ground and no-data DEM
+    cells are 0. By construction estimate_volume() == volume_map().sum(), so a
+    map and its headline number are always consistent. Pair the result with the
+    mask Raster's transform/crs to write a georeferenced product.
+    """
+    bed = np.asarray(bed, dtype="float64")
+    frac = np.clip(np.asarray(water, dtype="float64"), 0.0, 1.0)
+
+    depth = wse - bed  # signed depth
+    np.clip(depth, 0.0, None, out=depth)  # dry ground -> 0
+    depth[~np.isfinite(bed)] = 0.0  # no-data DEM contributes nothing
+    frac[~np.isfinite(frac)] = 0.0
+
+    return pixel_area * frac * depth
