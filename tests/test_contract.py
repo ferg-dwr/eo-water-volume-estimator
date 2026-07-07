@@ -27,8 +27,15 @@ def test_toolkit_payload_shape():
     payload = req.to_toolkit_payload()
     # Exactly the keys the toolkit's POST /api/v1/downloads consumes.
     assert set(payload) == {
-        "product", "min_lon", "min_lat", "max_lon", "max_lat",
-        "start_date", "end_date", "max_results", "output_dir",
+        "product",
+        "min_lon",
+        "min_lat",
+        "max_lon",
+        "max_lat",
+        "start_date",
+        "end_date",
+        "max_results",
+        "output_dir",
     }
     assert payload["start_date"] == "2026-02-01"
     assert payload["min_lon"] == -121.75
@@ -56,7 +63,7 @@ def test_requests_for_volume_asks_for_the_mask():
 
 def test_degenerate_bbox_rejected():
     with pytest.raises(ValueError):
-        AOI(-121.60, 38.20, -121.75, 38.35)   # min_lon > max_lon
+        AOI(-121.60, 38.20, -121.75, 38.35)  # min_lon > max_lon
 
 
 def test_inverted_dates_rejected():
