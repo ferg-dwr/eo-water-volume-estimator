@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  tests:
+    name: pytest (py${{ matrix.python-version }}, full install)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install with io extras
+        run: pip install -e ".[io,dev]"
+      - name: Run test suite
+        run: python -m pytest -q
+
+  core-only:
+    name: numpy-only core (lazy-import contract)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install without rasterio
+        run: pip install -e ".[dev]"
+      - name: Base import must not pull rasterio
+        run: |
+          python -c "import eo_water_volume, sys; assert 'rasterio' not in sys.modules; print('base import clean')"
+          python -c "import eo_water_volume.sources, sys; assert 'rasterio' not in sys.modules; print('sources imports lazily')"
+      - name: Tests run with rasterio tests skipping
+        run: python -m pytest -q
