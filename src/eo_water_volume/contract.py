@@ -26,8 +26,8 @@ from datetime import date
 PRODUCT_SHORT_NAMES: dict[str, str] = {
     "OPERA_DSWX_S1": "OPERA_L3_DSWX-S1_V1",
     "OPERA_DSWX_HLS": "OPERA_L3_DSWX-HLS_V1",
-    "SWOT_HR_RASTER": "SWOT_L2_HR_Raster_D",          # current (>= 2025-05-05)
-    "SWOT_HR_RASTER_VC": "SWOT_L2_HR_Raster_2.0",     # archive (<= 2025-05-03)
+    "SWOT_HR_RASTER": "SWOT_L2_HR_Raster_D",  # current (>= 2025-05-05)
+    "SWOT_HR_RASTER_VC": "SWOT_L2_HR_Raster_2.0",  # archive (<= 2025-05-03)
 }
 
 
@@ -53,7 +53,7 @@ class AOI:
 class DataRequest:
     """One dataset need, in the dwr-eo-toolkit download-request shape."""
 
-    product: str                 # logical name; see PRODUCT_SHORT_NAMES
+    product: str  # logical name; see PRODUCT_SHORT_NAMES
     aoi: AOI
     start_date: date
     end_date: date

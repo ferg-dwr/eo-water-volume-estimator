@@ -5,7 +5,8 @@ water mask. The whole estimate is one masked reduction:
 
     V = pixel_area * sum_i( water_i * max(wse - bed_i, 0) )
 
-Grids are assumed co-registered (same shape/CRS/pixel size).
+Pure numpy, no I/O. Grids are assumed co-registered (same shape/CRS/pixel size);
+alignment lives in the data layer, not here.
 
 Units: bed and wse in metres (NAVD88 for the CNRA Bay-Delta DEM); pixel_area in
 m^2; volume in m^3.
@@ -84,15 +85,31 @@ def wse_from_perimeter(bed: np.ndarray, water: np.ndarray) -> float:
 
 
 def summarize(
-    bed: np.ndarray, water: np.ndarray, wse: float, pixel_area: float
+    bed: np.ndarray,
+    water: np.ndarray,
+    wse: float,
+    pixel_area: float,
+    invalid: np.ndarray | None = None,
 ) -> dict:
-    """Volume plus the diagnostics you want to sanity-check a run."""
+    """Volume plus the diagnostics you want to sanity-check a run.
+
+    `invalid` is an optional boolean mask of unclassifiable pixels (sensor
+    could not see: cloud, layover/shadow, HAND, fill). They contribute zero
+    volume, so the returned `invalid_fraction` (share of all pixels in the
+    scene) is the run's honesty metric: a large value means the volume is a
+    known undercount. When `invalid` is not provided, `invalid_fraction` is
+    None ("not assessed"), never 0.0 ("assessed and clean")."""
     frac = np.clip(np.asarray(water, dtype="float64"), 0.0, 1.0)
     frac[~np.isfinite(frac)] = 0.0
     depth = np.clip(wse - np.asarray(bed, "float64"), 0.0, None)
     depth[~np.isfinite(bed)] = 0.0
     wet_area = float(pixel_area * np.sum(frac))
     vol = estimate_volume(bed, water, wse, pixel_area)
+    if invalid is not None:
+        inv = np.asarray(invalid, dtype=bool)
+        invalid_fraction = float(inv.sum() / inv.size) if inv.size else 0.0
+    else:
+        invalid_fraction = None
     return {
         "volume_m3": vol,
         "volume_acre_ft": vol / 1233.4818375475,  # DWR-facing units
@@ -100,4 +117,5 @@ def summarize(
         "wse_m": float(wse),
         "mean_depth_m": vol / wet_area if wet_area > 0 else 0.0,
         "max_depth_m": float(np.nanmax(depth)) if depth.size else 0.0,
+        "invalid_fraction": invalid_fraction,
     }

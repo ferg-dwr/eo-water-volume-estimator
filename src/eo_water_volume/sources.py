@@ -30,10 +30,20 @@ PARTIAL_WATER_FRACTION: float = 0.5
 DEFAULT_WATER_FRACTIONS: dict[int, float] = {1: 1.0, 2: PARTIAL_WATER_FRACTION}
 
 # Values >= 252 are invalid (HAND / layover-shadow / cloud / fill). They are
-# absent from the mapping above, so they resolve to 0.0 (dry) -- see ROADMAP for
-# why that silent drop needs explicit invalid-fraction accounting before a run's
-# number is trustworthy.
+# absent from the mapping above, so they resolve to 0.0 (dry); their extent is
+# surfaced separately via invalid_mask_from_classes so runs can report it.
 INVALID_FROM: int = 252
+
+
+def invalid_mask_from_classes(wtr: np.ndarray) -> np.ndarray:
+    """Boolean mask of pixels the sensor could not classify.
+
+    DSWx-S1 codes >= INVALID_FROM (252) are HAND-masked, layover/shadow, cloud,
+    or fill: the product says "no answer here", not "dry". Downstream, these
+    contribute zero volume -- the invalid *fraction* is reported so a run over a
+    partially masked scene carries its own honesty metric.
+    """
+    return np.asarray(wtr) >= INVALID_FROM
 
 
 def water_fraction_from_classes(
@@ -116,14 +126,17 @@ class LocalFileSource(WaterDataSource):
     def load_aligned(
         self,
         fractions: Mapping[int, float] = DEFAULT_WATER_FRACTIONS,
-    ) -> tuple[np.ndarray, np.ndarray, float]:
-        """Return (water, bed, pixel_area) ready for volume.estimate_volume().
+    ) -> tuple[np.ndarray, np.ndarray, float, np.ndarray]:
+        """Return (water, bed, pixel_area, invalid) for the volume core.
 
-        `water` is a per-pixel fraction in [0, 1] from `fractions` (open water 1.0,
-        partial a heuristic, invalid 0.0). Pass a custom mapping to change how the
-        partial class is weighted, e.g. {1: 1.0} for open water only.
+        `water` is a per-pixel fraction in [0, 1] from `fractions` (open water
+        1.0, partial a heuristic, invalid 0.0). `invalid` is a boolean mask of
+        unclassifiable pixels (codes >= 252): they contribute zero volume, and
+        passing them to volume.summarize() reports the invalid fraction so the
+        undercount is visible instead of silent.
         """
         mask = self.water_mask()
         bed = self.bathymetry(like=mask)
         water = water_fraction_from_classes(mask.data, fractions)
-        return water, bed.data, mask.pixel_area
+        invalid = invalid_mask_from_classes(mask.data)
+        return water, bed.data, mask.pixel_area, invalid
