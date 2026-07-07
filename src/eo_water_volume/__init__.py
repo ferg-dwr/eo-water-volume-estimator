@@ -5,7 +5,13 @@ needs no rasterio. Raster I/O lives in `eo_water_volume.sources`, imported on
 demand.
 """
 
-from .volume import estimate_volume, wse_from_perimeter, summarize
+from .volume import estimate_volume, volume_map, wse_from_perimeter, summarize
 
 __version__ = "0.1.0"
-__all__ = ["estimate_volume", "wse_from_perimeter", "summarize", "__version__"]
+__all__ = [
+    "estimate_volume",
+    "wse_from_perimeter",
+    "summarize",
+    "volume_map",
+    "__version__",
+]
