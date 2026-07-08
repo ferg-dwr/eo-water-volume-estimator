@@ -5,7 +5,7 @@ needs no rasterio. Raster I/O lives in `eo_water_volume.sources`, imported on
 demand.
 """
 
-from .volume import estimate_volume, volume_map, wse_from_perimeter, summarize
+from .volume import estimate_volume, summarize, volume_map, wse_from_perimeter
 
 __version__ = "0.2.0"
 __all__ = [

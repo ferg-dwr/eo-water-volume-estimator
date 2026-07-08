@@ -3,9 +3,9 @@
 import numpy as np
 
 from eo_water_volume.sources import (
-    water_fraction_from_classes,
     DEFAULT_WATER_FRACTIONS,
     PARTIAL_WATER_FRACTION,
+    water_fraction_from_classes,
 )
 
 

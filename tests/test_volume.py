@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from eo_water_volume import estimate_volume, wse_from_perimeter, summarize
+from eo_water_volume import estimate_volume, summarize, wse_from_perimeter
 
 
 def _paraboloid_bowl(px=30.0, r_target=3000.0, z0=1.0, h=5.0, n=401):

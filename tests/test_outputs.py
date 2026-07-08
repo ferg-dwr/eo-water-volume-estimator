@@ -3,10 +3,10 @@
 import numpy as np
 import pytest
 
-rasterio = pytest.importorskip("rasterio")
-
 from eo_water_volume.outputs import write_geotiff
 from eo_water_volume.sources import Raster
+
+rasterio = pytest.importorskip("rasterio")
 
 
 def _like(shape=(4, 5)):

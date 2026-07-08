@@ -6,9 +6,9 @@ import pytest
 
 from eo_water_volume.contract import (
     AOI,
+    PRODUCT_SHORT_NAMES,
     DataRequest,
     requests_for_volume,
-    PRODUCT_SHORT_NAMES,
 )
 
 
