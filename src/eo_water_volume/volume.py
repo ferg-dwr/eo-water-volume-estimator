@@ -33,8 +33,9 @@ def estimate_volume(
         Water coverage per pixel, interpreted as a fraction in [0, 1]. Pass a
         boolean/0-1 mask for open water, or a fractional layer for sub-pixel
         edges. Values outside [0, 1] are clipped.
-    wse : float
-        Water-surface elevation (planar-pool assumption), same datum as `bed`.
+    wse : float or 2-D array
+        Water-surface elevation, same datum as `bed`. A scalar means a flat
+        pool; a per-pixel grid means a tilted/arbitrary surface (broadcasts).
     pixel_area : float
         Ground area of one pixel, m^2 (e.g. 30 m * 30 m = 900).
 
@@ -85,6 +86,10 @@ def summarize(
 ) -> dict:
     """Volume plus the diagnostics you want to sanity-check a run.
 
+    wse : float or 2-D array
+        Water-surface elevation, same datum as `bed`. A scalar means a flat
+        pool; a per-pixel grid means a tilted/arbitrary surface (broadcasts).
+
     `invalid` is an optional boolean mask of unclassifiable pixels (sensor
     could not see: cloud, layover/shadow, HAND, fill). They contribute zero
     volume, so the returned `invalid_fraction` (share of all pixels in the
@@ -97,6 +102,8 @@ def summarize(
     depth[~np.isfinite(bed)] = 0.0
     wet_area = float(pixel_area * np.sum(frac))
     vol = estimate_volume(bed, water, wse, pixel_area)
+    wse_arr = np.asarray(wse, dtype="float64")
+    wse_mean = float(np.nanmean(wse_arr))
     if invalid is not None:
         inv = np.asarray(invalid, dtype=bool)
         invalid_fraction = float(inv.sum() / inv.size) if inv.size else 0.0
@@ -106,7 +113,7 @@ def summarize(
         "volume_m3": vol,
         "volume_acre_ft": vol / 1233.4818375475,  # DWR-facing units
         "wet_area_m2": wet_area,
-        "wse_m": float(wse),
+        "wse_m": wse_mean,
         "mean_depth_m": vol / wet_area if wet_area > 0 else 0.0,
         "max_depth_m": float(np.nanmax(depth)) if depth.size else 0.0,
         "invalid_fraction": invalid_fraction,
