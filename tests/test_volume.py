@@ -96,3 +96,16 @@ def test_volume_map_per_pixel_values():
     vmap = volume_map(bed, water, wse=2.0, pixel_area=10.0)
     # wet+shallow: 10*1*2=20 | dry (bed above wse): 0 | nodata: 0 | half-wet: 10*0.5*1=5
     assert vmap.tolist() == [[20.0, 0.0], [0.0, 5.0]]
+
+
+def test_wse_grid_tilted_plane_analytical():
+    # Tilted surface over a flat bed: V = pixel_area * sum(depth) exactly, and
+    # summarize() must accept the grid (reporting mean/min/max WSE).
+    bed = np.zeros((50, 100))
+    water = np.ones_like(bed)
+    wse = np.linspace(2.0, 4.0, 100)[None, :].repeat(50, axis=0)
+    v = estimate_volume(bed, water, wse, pixel_area=900.0)
+    assert abs(v - 900.0 * bed.size * 3.0) < 1e-6
+    s = summarize(bed, water, wse, 900.0)
+    assert abs(s["wse_m"] - 3.0) < 1e-12
+    assert s["volume_m3"] == v
