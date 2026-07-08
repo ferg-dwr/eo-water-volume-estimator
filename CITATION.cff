@@ -8,7 +8,7 @@ authors:
     given-names: "Fernando Emiliano"
     email: "fernando.romero-galvan@water.ca.gov"
     affiliation: "California Department of Water Resources / NASA Postdoctoral Program"
-    orcid: "https://orcid.org/0000-0003-0664-8169"   # add yours
+    orcid: "https://orcid.org/0000-0003-0664-8169"
 repository-code: "https://github.com/ferg-dwr/eo-water-volume-estimator"
 license: MIT
 keywords:
