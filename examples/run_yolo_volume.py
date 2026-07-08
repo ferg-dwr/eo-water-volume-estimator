@@ -9,9 +9,9 @@ First run downloads one granule to DOWNLOAD_DIR; later runs reuse it.
 
 The AOI polygon (not just its bbox) clips the analysis: the bbox is used only
 for the data search, so river water outside the bypass never pollutes the
-volume. WSE comes from the mask shoreline (perimeter median) until a gauge
-stage replaces it in M3 -- where the polygon edge cuts through water, that
-estimate degrades; treat the first number accordingly.
+volume. WSE is anchored to the nearest CDEC LIS gauge reading (NAVD88) at the
+granule's sensing time; the mask-perimeter estimate is kept as a reported
+diagnostic and as a loud, labeled fallback when the gauge is unreachable.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from eo_water_volume.contract import AOI, requests_for_volume
+from eo_water_volume.gauges import CdecStation, GaugeReading
 from eo_water_volume.outputs import write_geotiff
 from eo_water_volume.sources import LocalFileSource
 from eo_water_volume.volume import summarize, volume_map, wse_from_perimeter
@@ -60,6 +61,21 @@ def load_aoi() -> tuple[dict, AOI]:
     return geom, AOI(min(xs), min(ys), max(xs), max(ys))
 
 
+def overpass_time_utc(wtr_path: Path):
+    """Acquisition instant from the OPERA granule filename.
+
+    DSWx-S1 filenames carry two timestamps; the FIRST is the sensing time
+    (e.g. ..._T10SFH_20260115T015843Z_<processing>Z_...). Returns aware UTC.
+    """
+    import re
+    from datetime import datetime, timezone
+
+    m = re.search(r"_(\d{8}T\d{6})Z_", wtr_path.name)
+    if not m:
+        raise ValueError(f"No sensing timestamp in granule name: {wtr_path.name}")
+    return datetime.strptime(m.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+
+
 def fetch(aoi: AOI) -> Path:
     """Download one DSWx-S1 granule intersecting the AOI; return the WTR path."""
     existing = sorted(glob.glob(str(DOWNLOAD_DIR / "*B01_WTR*.tif")))
@@ -88,7 +104,13 @@ def fetch(aoi: AOI) -> Path:
     return Path(hits[0])
 
 
-def analyze(wtr_path: Path, dem_path: Path, aoi_geom: dict, out_dir: Path) -> dict:
+def analyze(
+    wtr_path: Path,
+    dem_path: Path,
+    aoi_geom: dict,
+    out_dir: Path,
+    gauge_reading: GaugeReading | None = None,
+) -> dict:
     """Volume, depth, and water-fraction products within the AOI polygon.
 
     Three single-band GeoTIFFs with NODATA=-9999 declared in metadata:
@@ -119,12 +141,28 @@ def analyze(wtr_path: Path, dem_path: Path, aoi_geom: dict, out_dir: Path) -> di
 
     water_aoi = np.where(inside, water, 0.0)
 
-    wse = wse_from_perimeter(bed, water_aoi)
+    # Perimeter WSE is always computed -- as the estimate when no gauge is
+    # given, and as a reported diagnostic when one is (the gauge-perimeter
+    # gap is itself a data-quality signal).
+    wse_perimeter = wse_from_perimeter(bed, water_aoi)
+    if gauge_reading is not None:
+        wse = gauge_reading.wse_navd88_m
+        wse_method = (
+            f"gauge {gauge_reading.station} @ {gauge_reading.time_utc.isoformat()} "
+            f"({gauge_reading.stage_ft} ft NAVD88)"
+        )
+    else:
+        wse = wse_perimeter
+        wse_method = "mask-perimeter median (gauge stage pending, M3)"
     stats = summarize(bed, water_aoi, wse, pixel_area, invalid=(invalid & inside))
     # Honest denominators: fraction of *AOI* pixels the sensor couldn't see,
     # not fraction of the whole scene (which dilutes the metric).
     stats["invalid_fraction_aoi"] = float(invalid[inside].mean())
     stats["aoi_pixel_share_of_scene"] = float(inside.mean())
+    stats["wse_perimeter_m"] = float(wse_perimeter)
+    stats["wse_gauge_minus_perimeter_m"] = (
+        float(wse - wse_perimeter) if gauge_reading is not None else None
+    )
 
     # --- three products, shared nodata semantics -----------------------------
     NODATA = -9999.0
@@ -143,7 +181,8 @@ def analyze(wtr_path: Path, dem_path: Path, aoi_geom: dict, out_dir: Path) -> di
     common_tags = {
         "aoi": "yolo-bypass-boundary",
         "wse_m_navd88": stats["wse_m"],
-        "wse_method": "mask-perimeter median (gauge stage pending, M3)",
+        "wse_method": wse_method,
+        "wse_perimeter_m": stats["wse_perimeter_m"],
         "invalid_fraction_aoi": stats["invalid_fraction_aoi"],
         "source_granule": wtr_path.name,
         "dem": dem_path.name,
@@ -172,7 +211,14 @@ def main() -> None:
     aoi_geom, aoi_bbox = load_aoi()
     print(f"AOI bbox (search only): {aoi_bbox.as_bbox()}")
     wtr_path = fetch(aoi_bbox)
-    stats = analyze(wtr_path, DEM_PATH, aoi_geom, OUTPUT_DIR)
+    # Fetch the gauge reading here so analyze() stays pure-local and the
+    # try/except guards exactly one fallible thing: the CDEC network call.
+    reading: GaugeReading | None = None
+    try:
+        reading = CdecStation().wse_navd88_m(overpass_time_utc(wtr_path))
+    except (OSError, LookupError) as err:
+        print(f"WARNING: gauge unavailable ({err}); falling back to perimeter WSE")
+    stats = analyze(wtr_path, DEM_PATH, aoi_geom, OUTPUT_DIR, gauge_reading=reading)
     print("\n--- Yolo Bypass volume ---")
     for k, v in stats.items():
         print(f"  {k:24s} {v}")
