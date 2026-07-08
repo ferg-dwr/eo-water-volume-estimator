@@ -128,7 +128,7 @@ def analyze(wtr_path: Path, dem_path: Path, aoi_geom: dict, out_dir: Path) -> di
 
     # --- three products, shared nodata semantics -----------------------------
     NODATA = -9999.0
-    answered = inside & ~invalid          # sensor gave an answer, in the AOI
+    answered = inside & ~invalid  # sensor gave an answer, in the AOI
 
     vmap = volume_map(bed, water_aoi, wse, pixel_area)
     vmap = np.where(answered, vmap, NODATA)
@@ -156,8 +156,13 @@ def analyze(wtr_path: Path, dem_path: Path, aoi_geom: dict, out_dir: Path) -> di
     for key, (grid, band, unit) in products.items():
         out_tif = out_dir / f"yolo_{key}_{wtr_path.stem}.tif"
         write_geotiff(
-            grid, mask_raster, str(out_tif),
-            nodata=NODATA, band_name=band, units=unit, tags=common_tags,
+            grid,
+            mask_raster,
+            str(out_tif),
+            nodata=NODATA,
+            band_name=band,
+            units=unit,
+            tags=common_tags,
         )
         stats[f"{key}_map"] = str(out_tif)
     return stats
