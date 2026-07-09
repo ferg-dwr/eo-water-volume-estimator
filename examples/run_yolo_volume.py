@@ -315,8 +315,8 @@ def main() -> None:
             f"{st['volume_acre_ft']:>12,.0f} {st['wse_m']:>7.3f}"
         )
 
-    primary = results.get("wse-profile-v1") or next(iter(results.values()))
-    print("\n--- primary run (most detailed model available) ---")
+    primary = results.get("wse-gauge-v1") or next(iter(results.values()))
+    print("\n--- primary run (gauge-anchored; profile is experimental) ---")
     for k, v in primary.items():
         print(f"  {k:32s} {v}")
 
