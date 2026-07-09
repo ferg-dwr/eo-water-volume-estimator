@@ -68,11 +68,14 @@ class WseEstimator(ABC):
         bed: np.ndarray,
         water: np.ndarray,
         when_utc: datetime | None = None,
+        region: np.ndarray | None = None,
     ) -> WseField:
         """Estimate the water surface for this scene.
 
         `bed` and `water` are the co-registered DEM and water-fraction grids;
-        `when_utc` is the sensing instant for time-aware estimators (gauges).
+        `when_utc` is the sensing instant for time-aware estimators (gauges);
+        `region` is an optional boolean in-AOI mask so estimators that read
+        the shoreline can ignore polygon-cut edges (others may ignore it).
         """
 
 
@@ -82,7 +85,7 @@ class PerimeterWse(WseEstimator):
 
     MODEL_ID = "wse-perimeter-v1"
 
-    def estimate(self, bed, water, when_utc=None) -> WseField:
+    def estimate(self, bed, water, when_utc=None, region=None) -> WseField:
         wse = wse_from_perimeter(bed, water)
         return WseField(
             values=wse,
@@ -103,7 +106,7 @@ class GaugeWse(WseEstimator):
     def __init__(self, reading: GaugeReading):
         self.reading = reading
 
-    def estimate(self, bed, water, when_utc=None) -> WseField:
+    def estimate(self, bed, water, when_utc=None, region=None) -> WseField:
         r = self.reading
         perim = wse_from_perimeter(bed, water)
         return WseField(
@@ -121,6 +124,128 @@ class GaugeWse(WseEstimator):
         )
 
 
+class ShorelineProfileWse(WseEstimator):
+    """Tilted WSE from the mask shoreline, optionally gauge-anchored.
+
+    The DEM elevation along the water's edge is a local WSE sample wherever
+    the edge is a real shoreline. This estimator collects those samples as a
+    function of along-axis position (image ROW -- rows are northing-ordered
+    at fixed pixel size, so the estimator needs no georeferencing), fits a
+    robust profile (per-bin medians, lightly smoothed, interpolated across
+    gaps), and returns a per-pixel WSE grid. With an anchor reading the whole
+    profile is shifted so it passes through the gauge (shape from the
+    DEM+mask, level from the gauge); unanchored it is the tilted sibling of
+    PerimeterWse.
+
+    Polygon-cut edges are excluded via `region`: a shoreline sample requires
+    a dry neighbor that is INSIDE the region -- water cut by the AOI boundary
+    is not a shoreline.
+    """
+
+    MODEL_ID = "wse-profile-v1"
+
+    def __init__(
+        self,
+        anchor: GaugeReading | None = None,
+        gauge_row: int | None = None,
+        pixel_size_m: float = 30.0,
+        bin_rows: int = 33,  # ~1 km bins at 30 m pixels
+        min_bin_samples: int = 10,
+    ):
+        if anchor is not None and gauge_row is None:
+            raise ValueError("anchoring requires gauge_row (the gauge's image row)")
+        self.anchor = anchor
+        self.gauge_row = gauge_row
+        self.pixel_size_m = pixel_size_m
+        self.bin_rows = bin_rows
+        self.min_bin_samples = min_bin_samples
+
+    def _shoreline(self, bed, wet, region):
+        dry_inside = (~wet) & region
+        near_dry = np.zeros_like(wet)
+        near_dry[:-1, :] |= dry_inside[1:, :]
+        near_dry[1:, :] |= dry_inside[:-1, :]
+        near_dry[:, :-1] |= dry_inside[:, 1:]
+        near_dry[:, 1:] |= dry_inside[:, :-1]
+        shore = wet & region & near_dry & np.isfinite(bed)
+        return shore
+
+    def estimate(self, bed, water, when_utc=None, region=None) -> WseField:
+        bed = np.asarray(bed, dtype="float64")
+        wet = np.asarray(water, dtype="float64") > 0.5
+        region = np.ones_like(wet) if region is None else np.asarray(region, dtype=bool)
+
+        shore = self._shoreline(bed, wet, region)
+        rows_idx, _ = np.nonzero(shore)
+        samples = bed[shore]
+        if samples.size < self.min_bin_samples:
+            raise ValueError(
+                f"Only {samples.size} shoreline samples; cannot fit a profile."
+            )
+
+        nrows = bed.shape[0]
+        nbins = max(1, nrows // self.bin_rows)
+        edges = np.linspace(0, nrows, nbins + 1)
+        centers, medians = [], []
+        for b in range(nbins):
+            in_bin = (rows_idx >= edges[b]) & (rows_idx < edges[b + 1])
+            if in_bin.sum() >= self.min_bin_samples:
+                centers.append(0.5 * (edges[b] + edges[b + 1]))
+                medians.append(float(np.median(samples[in_bin])))
+        if len(centers) < 2:
+            raise ValueError(
+                f"Only {len(centers)} populated profile bin(s); need >= 2 "
+                "(shoreline too sparse for a tilt -- use PerimeterWse/GaugeWse)."
+            )
+        centers = np.asarray(centers)
+        medians = np.asarray(medians)
+        if len(medians) >= 3:  # light smoothing: 3-bin moving average, edges kept
+            sm = medians.copy()
+            sm[1:-1] = (medians[:-2] + medians[1:-1] + medians[2:]) / 3.0
+            medians = sm
+
+        row_axis = np.arange(nrows) + 0.5
+        profile = np.interp(row_axis, centers, medians)  # clamps beyond end bins
+
+        resid = samples - np.interp(rows_idx + 0.5, centers, medians)
+        slope_m_per_m = float(np.polyfit(centers * self.pixel_size_m, medians, 1)[0])
+        diagnostics = {
+            "wse_perimeter_m": float(np.median(samples)),
+            "profile_n_samples": int(samples.size),
+            "profile_n_bins": int(len(centers)),
+            "profile_slope_m_per_m": slope_m_per_m,
+            "profile_residual_mad_m": float(np.median(np.abs(resid))),
+        }
+
+        anchored = ""
+        if self.anchor is not None:
+            at_gauge = float(np.interp(self.gauge_row + 0.5, centers, medians))
+            offset = self.anchor.wse_navd88_m - at_gauge
+            profile = profile + offset
+            diagnostics.update(
+                {
+                    "profile_at_gauge_unanchored_m": at_gauge,
+                    "profile_anchor_offset_m": offset,
+                    "gauge_station": self.anchor.station,
+                    "gauge_time_utc": self.anchor.time_utc.isoformat(),
+                }
+            )
+            anchored = (
+                f", anchored through {self.anchor.station} "
+                f"@ {self.anchor.wse_navd88_m:.3f} m"
+            )
+
+        grid = np.broadcast_to(profile[:, None], bed.shape)
+        return WseField(
+            values=grid,
+            method=(
+                f"shoreline profile ({len(centers)} bins, "
+                f"slope {slope_m_per_m:+.2e} m/m{anchored})"
+            ),
+            diagnostics=diagnostics,
+        )
+
+
 # --- model registry -----------------------------------------------------------
 # Single machine-readable source of truth for WSE-estimator identity. The
 # human-readable companion is MODELS.md at the repo root (table of
@@ -130,4 +255,5 @@ class GaugeWse(WseEstimator):
 MODEL_REGISTRY: dict[str, type[WseEstimator]] = {
     PerimeterWse.MODEL_ID: PerimeterWse,
     GaugeWse.MODEL_ID: GaugeWse,
+    ShorelineProfileWse.MODEL_ID: ShorelineProfileWse,
 }
