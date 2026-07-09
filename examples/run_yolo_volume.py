@@ -25,10 +25,10 @@ import numpy as np
 
 from eo_water_volume.contract import AOI, requests_for_volume
 from eo_water_volume.gauges import CdecStation
-from eo_water_volume.wse import GaugeWse, PerimeterWse, WseEstimator
 from eo_water_volume.outputs import write_geotiff
 from eo_water_volume.sources import LocalFileSource
 from eo_water_volume.volume import summarize, volume_map
+from eo_water_volume.wse import GaugeWse, PerimeterWse, WseEstimator
 
 # --- config -----------------------------------------------------------------
 REPO = Path(__file__).resolve().parents[1]
