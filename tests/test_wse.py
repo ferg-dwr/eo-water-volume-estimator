@@ -3,9 +3,13 @@
 from datetime import datetime, timezone
 
 import numpy as np
+import pytest
 
 from eo_water_volume.gauges import GaugeReading
 from eo_water_volume.wse import GaugeWse, PerimeterWse, WseField
+from eo_water_volume import estimate_volume
+
+from typing import ClassVar
 
 
 def _bowl(px=30.0, r=3000.0, z0=1.0, h=5.0, n=401):
@@ -68,3 +72,78 @@ def test_every_concrete_estimator_is_registered():
     }
     assert concrete == set(MODEL_REGISTRY.values())
     assert all(hasattr(c, "MODEL_ID") for c in WseEstimator.__subclasses__())
+
+
+def _tilted_valley(n=400):
+    # V-ish valley with an along-axis bed slope and a TILTED true water surface.
+    rows = np.arange(n) + 0.5
+    cols = np.arange(n) - n / 2
+    valley = 0.001 * np.abs(cols) ** 2 * 0.05
+    bed = (-0.002 * rows)[:, None] + valley[None, :] + 3.0
+    true_wse = 4.5 - 0.0012 * rows
+    water = (bed < true_wse[:, None]).astype(float)
+    return bed, water, true_wse
+
+
+def test_profile_recovers_tilted_surface():
+    from eo_water_volume.wse import ShorelineProfileWse
+
+    bed, water, true_wse = _tilted_valley()
+    f = ShorelineProfileWse().estimate(bed, water, region=np.ones(bed.shape, bool))
+
+    assert not f.is_flat
+    err = np.abs(f.values[:, 0] - true_wse)
+    assert err.max() < 0.05  # tracks the true tilt to a few cm
+    # fitted slope matches the truth (-0.0012 per row / 30 m pixels)
+    assert abs(f.diagnostics["profile_slope_m_per_m"] - (-0.0012 / 30.0)) < 2e-6
+
+
+def test_profile_anchoring_shifts_through_gauge():
+    from eo_water_volume.wse import ShorelineProfileWse
+
+    bed, water, true_wse = _tilted_valley()
+    r = GaugeReading(
+        "LIS",
+        datetime(2026, 1, 15, 2, tzinfo=timezone.utc),
+        0.0,
+        float(true_wse[200]),
+    )
+    f = ShorelineProfileWse(anchor=r, gauge_row=200).estimate(
+        bed, water, region=np.ones(bed.shape, bool)
+    )
+    # anchored profile passes through the gauge value at the gauge row
+    assert abs(f.values[200, 0] - true_wse[200]) < 0.03
+    assert "profile_anchor_offset_m" in f.diagnostics
+    # volume against direct integration of the TRUE surface
+    v_est = estimate_volume(bed, water, f.values, 900.0)
+    v_true = 900.0 * np.sum(np.clip(true_wse[:, None] - bed, 0, None) * water)
+    assert abs(v_est - v_true) / v_true < 0.02
+
+
+def test_profile_excludes_polygon_cut_edges():
+    from eo_water_volume.wse import ShorelineProfileWse
+
+    bed, water, true_wse = _tilted_valley()
+    region = np.ones(bed.shape, bool)
+    region[:, 300:] = False  # slice the AOI straight through the pool
+    f = ShorelineProfileWse().estimate(bed, water, region=region)
+    err = np.abs(f.values[:, 0] - true_wse)
+    assert err.max() < 0.05  # cut edge contributed no fake samples
+
+
+def test_profile_fails_loudly_on_sparse_shoreline():
+    from eo_water_volume.wse import ShorelineProfileWse
+
+    bed, water, _ = _tilted_valley()
+    with pytest.raises(ValueError):
+        ShorelineProfileWse(min_bin_samples=10**6).estimate(
+            bed, water, region=np.ones(bed.shape, bool)
+        )
+
+
+def test_profile_requires_gauge_row_when_anchored():
+    from eo_water_volume.wse import ShorelineProfileWse
+
+    r = GaugeReading("LIS", datetime(2026, 1, 15, 2, tzinfo=timezone.utc), 13.31, 4.057)
+    with pytest.raises(ValueError):
+        ShorelineProfileWse(anchor=r)

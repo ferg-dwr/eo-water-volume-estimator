@@ -16,8 +16,8 @@ re-defined in place.
 |---|---|---|---|---|---|---|
 | `wse-perimeter-v1` | `PerimeterWse` | flat (scalar) | nothing (self-contained) | mask edge is a real shoreline; single quasi-static pool | `wse_perimeter_m` | degrades where the edge is clouds, AOI cuts, or levee faces; measured +0.52-0.59 m low vs the LIS gauge on the 2026-01-15 Yolo scene |
 | `wse-gauge-v1` | `GaugeWse` | flat (scalar) | one datum-corrected `GaugeReading` (NAVD88 m) within 3 h of sensing | flat pool across the whole AOI; gauge datum verified (see `gauges.py` header) | `wse_perimeter_m`, `wse_gauge_minus_perimeter_m`, `gauge_station`, `gauge_time_utc` | one point stretched over a 59 km system; tilt error grows with distance from the gauge (the uncertainty product's distance term bounds this as a labeled scenario) |
+| `wse-profile-v1` | `ShorelineProfileWse` | tilted (per-pixel grid) | `region` mask; optional anchor `GaugeReading` + its image row | mask edge is a real shoreline where a dry in-region neighbor exists; tilt varies along-axis only | `profile_n_samples`, `profile_n_bins`, `profile_slope_m_per_m`, `profile_residual_mad_m`, `profile_at_gauge_unanchored_m`, `profile_anchor_offset_m` | levee-face samples bias bins high; sparse shorelines raise ValueError; column-direction tilt not modeled |
 
-Reserved (designs in ROADMAP M3, not yet implemented): `wse-profile-v1`
 (shoreline-sampled tilt anchored through a gauge), `wse-2gauge-v1` (linear
 tilt between two live anchors -- blocked on a live southern gauge).
 
