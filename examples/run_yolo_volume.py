@@ -121,15 +121,19 @@ def analyze(
     out_dir: Path,
     estimator: WseEstimator | None = None,
 ) -> dict:
-    """Volume, depth, and water-fraction products within the AOI polygon.
+    """Volume, depth, water-fraction, and uncertainty products within the AOI.
 
-    Three single-band GeoTIFFs with NODATA=-9999 declared in metadata:
-      *_volume : m^3 per pixel; 0.0 is a real value (analyzed, no water);
-                 nodata outside the AOI and where the sensor gave no answer
-      *_depth  : water-column depth (wse - bed, m) only where water was
-                 detected; nodata elsewhere -- "no water" is not "0 m of water"
-      *_water  : DSWx-derived water fraction (0 / 0.5 / 1); nodata outside the
-                 AOI and at invalid (cloud/HAND/layover) pixels
+    Four single-band GeoTIFFs with NODATA=-9999 declared in metadata:
+    *_volume      : m^3 per pixel; 0.0 is a real value (analyzed, no water);
+                    nodata outside the AOI and where the sensor gave no answer
+    *_depth       : water-column depth (wse - bed, m) only where water was
+                    detected; nodata elsewhere -- "no water" is not "0 m of water"
+    *_water       : DSWx-derived water fraction; nodata outside the AOI and
+                    at invalid (HAND/layover/shadow) pixels
+    *_uncertainty : combined per-pixel volume-uncertainty envelope (m^3);
+                    valid on ALL AOI pixels incl. sensor-blind ones -- the
+                    blind pixels are where uncertainty lives; nodata only
+                    outside the polygon
     """
     from rasterio.features import geometry_mask
     from rasterio.warp import transform_geom
@@ -164,10 +168,10 @@ def analyze(
     # not fraction of the whole scene (which dilutes the metric).
     stats["invalid_fraction_aoi"] = float(invalid[inside].mean())
     stats["aoi_pixel_share_of_scene"] = float(inside.mean())
+    stats["wse_model_id"] = est.MODEL_ID
     stats.update(wse_field.summary_stats())
     stats.update(wse_field.diagnostics)
 
-    # --- three products, shared nodata semantics -----------------------------
     # --- uncertainty terms (see uncertainty.py for the epistemics) ----------
     # Along-axis (northing) distance from the anchoring gauge, per pixel row.
     from rasterio.warp import transform as warp_transform
