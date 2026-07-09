@@ -35,7 +35,12 @@ from eo_water_volume.uncertainty import (
     wse_distance_term,
 )
 from eo_water_volume.volume import summarize, volume_map
-from eo_water_volume.wse import GaugeWse, PerimeterWse, WseEstimator
+from eo_water_volume.wse import (
+    GaugeWse,
+    PerimeterWse,
+    ShorelineProfileWse,
+    WseEstimator,
+)
 
 # --- config -----------------------------------------------------------------
 REPO = Path(__file__).resolve().parents[1]
@@ -69,6 +74,17 @@ def load_aoi() -> tuple[dict, AOI]:
 
     walk(geom["coordinates"])
     return geom, AOI(min(xs), min(ys), max(xs), max(ys))
+
+
+def gauge_row_for(wtr_path: Path, lon: float, lat: float) -> int:
+    """Image row of a lon/lat point in this granule (for profile anchoring)."""
+    import rasterio
+    from rasterio.warp import transform as warp_transform
+
+    with rasterio.open(wtr_path) as src:
+        (x,), (y,) = warp_transform("EPSG:4326", src.crs, [lon], [lat])
+        row, _ = src.index(x, y)
+    return int(row)
 
 
 def overpass_time_utc(wtr_path: Path):
@@ -159,7 +175,9 @@ def analyze(
     # self-contained default. Every estimator names itself and carries its
     # diagnostics (e.g. the gauge-perimeter gap) into stats and provenance.
     est = estimator or PerimeterWse()
-    wse_field = est.estimate(bed, water_aoi, when_utc=overpass_time_utc(wtr_path))
+    wse_field = est.estimate(
+        bed, water_aoi, when_utc=overpass_time_utc(wtr_path), region=inside
+    )
 
     wse = wse_field.values
     wse_method = wse_field.method
@@ -267,18 +285,40 @@ def main() -> None:
     aoi_geom, aoi_bbox = load_aoi()
     print(f"AOI bbox (search only): {aoi_bbox.as_bbox()}")
     wtr_path = fetch(aoi_bbox)
-    # Build the estimator here so analyze() stays pure-local and the
-    # try/except guards exactly one fallible thing: the CDEC network call.
-    estimator: WseEstimator = PerimeterWse()
+
+    # Build the estimator lineup. Only the CDEC call can fail; everything
+    # else is local. Gauge-dependent models drop out loudly if it does.
+    estimators: list[WseEstimator] = [PerimeterWse()]
     try:
         reading = CdecStation().wse_navd88_m(overpass_time_utc(wtr_path))
-        estimator = GaugeWse(reading)
+        estimators.append(GaugeWse(reading))
+        estimators.append(
+            ShorelineProfileWse(
+                anchor=reading,
+                gauge_row=gauge_row_for(wtr_path, LIS_LON, LIS_LAT),
+            )
+        )
     except (OSError, LookupError) as err:
-        print(f"WARNING: gauge unavailable ({err}); falling back to perimeter WSE")
-    stats = analyze(wtr_path, DEM_PATH, aoi_geom, OUTPUT_DIR, estimator=estimator)
-    print("\n--- Yolo Bypass volume ---")
-    for k, v in stats.items():
-        print(f"  {k:24s} {v}")
+        print(f"WARNING: gauge unavailable ({err}); running perimeter model only")
+
+    results = {}
+    for est in estimators:
+        results[est.MODEL_ID] = analyze(
+            wtr_path, DEM_PATH, aoi_geom, OUTPUT_DIR, estimator=est
+        )
+
+    print("\n--- method comparison ---")
+    print(f"{'model':<18s} {'volume_m3':>15s} {'acre_ft':>12s} {'wse_m':>7s}")
+    for mid, st in results.items():
+        print(
+            f"{mid:<18s} {st['volume_m3']:>15,.0f} "
+            f"{st['volume_acre_ft']:>12,.0f} {st['wse_m']:>7.3f}"
+        )
+
+    primary = results.get("wse-profile-v1") or next(iter(results.values()))
+    print("\n--- primary run (most detailed model available) ---")
+    for k, v in primary.items():
+        print(f"  {k:32s} {v}")
 
 
 if __name__ == "__main__":
