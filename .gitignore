@@ -80,4 +80,6 @@ logs/
 data/
 
 # QGIS project files
+figures/GIS/
 *.qgs
+*.qgz
