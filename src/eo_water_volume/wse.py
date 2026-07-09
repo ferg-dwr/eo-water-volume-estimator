@@ -119,3 +119,15 @@ class GaugeWse(WseEstimator):
                 "gauge_time_utc": r.time_utc.isoformat(),
             },
         )
+
+
+# --- model registry -----------------------------------------------------------
+# Single machine-readable source of truth for WSE-estimator identity. The
+# human-readable companion is MODELS.md at the repo root (table of
+# assumptions, diagnostics, and failure modes, plus the "adding a model"
+# recipe). Versioning rule: any behavior change to an estimator is a NEW
+# MODEL_ID (v1 -> v2); old outputs stay interpretable forever.
+MODEL_REGISTRY: dict[str, type[WseEstimator]] = {
+    PerimeterWse.MODEL_ID: PerimeterWse,
+    GaugeWse.MODEL_ID: GaugeWse,
+}

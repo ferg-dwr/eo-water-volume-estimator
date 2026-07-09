@@ -49,3 +49,22 @@ def test_summary_stats_same_keys_flat_and_grid():
     assert abs(kg["wse_m"] - 3.0) < 1e-12
     assert (kg["wse_min_m"], kg["wse_max_m"]) == (2.0, 4.0)
     assert not grid.is_flat and flat.is_flat
+
+
+def test_registry_keys_match_model_ids():
+    from eo_water_volume.wse import MODEL_REGISTRY
+
+    for model_id, cls in MODEL_REGISTRY.items():
+        assert cls.MODEL_ID == model_id
+
+
+def test_every_concrete_estimator_is_registered():
+    # Adding an estimator without registering it (and documenting it in
+    # MODELS.md) should fail CI, not drift silently.
+    from eo_water_volume.wse import MODEL_REGISTRY, WseEstimator
+
+    concrete = {
+        c for c in WseEstimator.__subclasses__() if getattr(c, "MODEL_ID", None)
+    }
+    assert concrete == set(MODEL_REGISTRY.values())
+    assert all(hasattr(c, "MODEL_ID") for c in WseEstimator.__subclasses__())
