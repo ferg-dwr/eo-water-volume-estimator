@@ -27,6 +27,13 @@ from eo_water_volume.contract import AOI, requests_for_volume
 from eo_water_volume.gauges import CdecStation
 from eo_water_volume.outputs import write_geotiff
 from eo_water_volume.sources import LocalFileSource
+from eo_water_volume.uncertainty import (
+    budget,
+    combine,
+    invalid_term,
+    partial_fraction_term,
+    wse_distance_term,
+)
 from eo_water_volume.volume import summarize, volume_map
 from eo_water_volume.wse import GaugeWse, PerimeterWse, WseEstimator
 
@@ -36,6 +43,8 @@ GEOJSON_PATH = REPO / "data/polys/yolo-bypass-boundary.geojson"
 DEM_PATH = REPO / "data/dem/CNRA/dem_delta_10m_20250312/dem_delta_10m_20250312.tif"
 DOWNLOAD_DIR = REPO / "data/downloads/yolo"
 OUTPUT_DIR = REPO / "data/outputs"
+LIS_LON, LIS_LAT = -121.588, 38.475  # CDEC LIS (Lisbon), the WSE anchor
+SLOPE_RATE = 5e-5  # m/m -- SCENARIO knob for the WSE-distance term
 TEMPORAL = (date(2026, 1, 15), date(2026, 3, 15))  # 2026 wet season; safely
 # past the DSWx-S1 S1A/S1C mixing anomaly (granules dated 2025-05-20..12-09).
 # ------------------------------------------------------------------------------
@@ -145,9 +154,9 @@ def analyze(
     # The WSE method is a swappable estimator; PerimeterWse is the
     # self-contained default. Every estimator names itself and carries its
     # diagnostics (e.g. the gauge-perimeter gap) into stats and provenance.
-    wse_field = (estimator or PerimeterWse()).estimate(
-        bed, water_aoi, when_utc=overpass_time_utc(wtr_path)
-    )
+    est = estimator or PerimeterWse()
+    wse_field = est.estimate(bed, water_aoi, when_utc=overpass_time_utc(wtr_path))
+
     wse = wse_field.values
     wse_method = wse_field.method
     stats = summarize(bed, water_aoi, wse, pixel_area, invalid=(invalid & inside))
@@ -159,10 +168,52 @@ def analyze(
     stats.update(wse_field.diagnostics)
 
     # --- three products, shared nodata semantics -----------------------------
+    # --- uncertainty terms (see uncertainty.py for the epistemics) ----------
+    # Along-axis (northing) distance from the anchoring gauge, per pixel row.
+    from rasterio.warp import transform as warp_transform
+
+    _, (gauge_northing,) = warp_transform(
+        "EPSG:4326", mask_raster.crs, [LIS_LON], [LIS_LAT]
+    )
+    t = mask_raster.transform
+    row_northing = t.f + (np.arange(water.shape[0]) + 0.5) * t.e
+    dist_m = np.broadcast_to(
+        np.abs(row_northing - gauge_northing)[:, None], water.shape
+    )
+
+    partial = (mask_raster.data == 2) & inside  # DSWx class 2 = partial water
+    unc_partial = partial_fraction_term(bed, wse, pixel_area, partial)
+    unc_invalid = invalid_term(bed, wse, pixel_area, invalid & inside)
+    unc_wse = wse_distance_term(water_aoi, pixel_area, dist_m, SLOPE_RATE)
+
+    # Measured method-spread: |volume difference| vs the perimeter method
+    # (zero by construction when the perimeter method IS the estimator).
+    vmap = volume_map(bed, water_aoi, wse, pixel_area)
+    if est.MODEL_ID == PerimeterWse.MODEL_ID:
+        unc_spread = np.zeros_like(vmap)
+    else:
+        perim_field = PerimeterWse().estimate(bed, water_aoi)
+        unc_spread = np.abs(
+            vmap - volume_map(bed, water_aoi, perim_field.values, pixel_area)
+        )
+
+    unc = combine(unc_partial, unc_invalid, unc_wse, unc_spread)
+    stats.update(
+        budget(
+            {
+                "partial": unc_partial,
+                "invalid": unc_invalid,
+                "wse_distance_scenario": unc_wse,
+                "method_spread": unc_spread,
+            },
+            stats["volume_m3"],
+        )
+    )
+
+    # --- four products, shared nodata semantics ------------------------------
     NODATA = -9999.0
     answered = inside & ~invalid  # sensor gave an answer, in the AOI
 
-    vmap = volume_map(bed, water_aoi, wse, pixel_area)
     vmap = np.where(answered, vmap, NODATA)
 
     depth = np.clip(wse - bed, 0.0, None)
@@ -170,28 +221,31 @@ def analyze(
     depth = np.where(wet, depth, NODATA)  # depth only where water was detected
 
     frac = np.where(answered, water_aoi, NODATA)
+    unc = np.where(inside, unc, NODATA)  # defined on ALL AOI pixels (invalid
+    # pixels carry their own bound), nodata only outside the polygon
 
     out_dir.mkdir(parents=True, exist_ok=True)
     common_tags = {
         "aoi": "yolo-bypass-boundary",
         "wse_m_navd88": stats["wse_m"],
         "wse_method": wse_method,
+        "wse_model_id": est.MODEL_ID,
         "wse_perimeter_m": stats["wse_perimeter_m"],
         "invalid_fraction_aoi": stats["invalid_fraction_aoi"],
+        "unc_total_m3": stats["unc_total_m3"],
+        "unc_slope_rate_scenario_m_per_m": SLOPE_RATE,
         "source_granule": wtr_path.name,
         "dem": dem_path.name,
     }
     products = {
         "volume": (vmap, "water_volume_m3", "m^3"),
-        "depth": (depth, "water_fraction" if False else "water_volume_m3", "m^3"),
-    }
-    products = {
-        "volume": (vmap, "water_volume_m3", "m^3"),
         "depth": (depth, "water_depth_m", "m"),
         "water": (frac, "water_fraction", "fraction"),
+        "uncertainty": (unc, "volume_uncertainty_m3", "m^3"),
     }
+
     for key, (grid, band, unit) in products.items():
-        out_tif = out_dir / f"yolo_{key}_{wtr_path.stem}.tif"
+        out_tif = out_dir / f"yolo_{key}_{est.MODEL_ID}_{wtr_path.stem}.tif"
         write_geotiff(
             grid,
             mask_raster,

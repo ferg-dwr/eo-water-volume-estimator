@@ -80,6 +80,8 @@ class PerimeterWse(WseEstimator):
     """Median DEM elevation along the mask shoreline. Self-contained; degrades
     where the mask edge is not a real shoreline (clouds, AOI cuts, levees)."""
 
+    MODEL_ID = "wse-perimeter-v1"
+
     def estimate(self, bed, water, when_utc=None) -> WseField:
         wse = wse_from_perimeter(bed, water)
         return WseField(
@@ -95,6 +97,8 @@ class GaugeWse(WseEstimator):
     Carries the perimeter estimate as a diagnostic: the gauge-perimeter gap is
     a per-scene data-quality signal (Jan 15 2026 Yolo run: +0.565 m).
     """
+
+    MODEL_ID = "wse-gauge-v1"
 
     def __init__(self, reading: GaugeReading):
         self.reading = reading
