@@ -20,6 +20,7 @@ import numpy as np
 # Per-pixel water fraction assigned to each OPERA DSWx-S1 WTR class.
 #   1 = open water        -> fully wet
 #   2 = partial water / inundated vegetation
+#   3 = inundated vegetation -> fully wet
 # IMPORTANT: DSWx-S1 flags class 2 *categorically* -- it carries no sub-pixel
 # fraction -- so PARTIAL_WATER_FRACTION below is a HEURISTIC, not a measurement.
 # It is a single visible knob: set it to 1.0 to treat partial as fully wet
@@ -27,12 +28,15 @@ import numpy as np
 # or leave the nominal 0.5. A *quantitative* sub-pixel fraction comes later from
 # SWOT's water_fraction band, not from DSWx-S1.
 PARTIAL_WATER_FRACTION: float = 0.5
-DEFAULT_WATER_FRACTIONS: dict[int, float] = {1: 1.0, 2: PARTIAL_WATER_FRACTION}
+DEFAULT_WATER_FRACTIONS = {
+    1: 1.0,  # open water (DSWx-S1 and DSWx-HLS)
+    2: 0.5,  # partial surface water -- DSWx-HLS only; explicit heuristic
+    3: 1.0,  # inundated vegetation -- DSWx-S1; spec: "considered inundated"
+}
 
-# Values >= 252 are invalid (HAND / layover-shadow / cloud / fill). They are
-# absent from the mapping above, so they resolve to 0.0 (dry); their extent is
-# surfaced separately via invalid_mask_from_classes so runs can report it.
-INVALID_FROM: int = 252
+INVALID_FROM = 250  # DSWx-S1: 250 HAND, 251 layover/shadow, 255 fill;
+# DSWx-HLS masks (252+) also caught. Verified vs the
+# OPERA DSWx-S1 Product Spec v1.0.0, 2026-07-09.
 
 
 def invalid_mask_from_classes(wtr: np.ndarray) -> np.ndarray:

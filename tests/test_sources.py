@@ -30,12 +30,17 @@ def test_invalid_classes_are_dry():
 def test_default_fractions_shape():
     assert DEFAULT_WATER_FRACTIONS[1] == 1.0
     assert 0.0 <= DEFAULT_WATER_FRACTIONS[2] <= 1.0
+    assert water_fraction_from_classes(np.array([[3]])).tolist() == [
+        [1.0]
+    ]  # inundated vegetation, S1
 
 
 def test_invalid_mask_flags_unclassifiable_codes():
     from eo_water_volume.sources import invalid_mask_from_classes
 
-    wtr = np.array([[0, 1, 2, 251, 252, 253, 255]])
+    # DSWx-S1 spec: masks are 250 (HAND), 251 (layover/shadow), 255 (fill);
+    # water classes are <= 3. Boundary pinned at 250.
+    wtr = np.array([[0, 1, 2, 3, 249, 250, 251, 252, 253, 255]])
     assert invalid_mask_from_classes(wtr).tolist() == [
-        [False, False, False, False, True, True, True]
+        [False, False, False, False, False, True, True, True, True, True]
     ]
