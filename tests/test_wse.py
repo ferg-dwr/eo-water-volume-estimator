@@ -5,11 +5,9 @@ from datetime import datetime, timezone
 import numpy as np
 import pytest
 
+from eo_water_volume import estimate_volume
 from eo_water_volume.gauges import GaugeReading
 from eo_water_volume.wse import GaugeWse, PerimeterWse, WseField
-from eo_water_volume import estimate_volume
-
-from typing import ClassVar
 
 
 def _bowl(px=30.0, r=3000.0, z0=1.0, h=5.0, n=401):
