@@ -24,10 +24,11 @@ from pathlib import Path
 import numpy as np
 
 from eo_water_volume.contract import AOI, requests_for_volume
-from eo_water_volume.gauges import CdecStation, GaugeReading
+from eo_water_volume.gauges import CdecStation
+from eo_water_volume.wse import GaugeWse, PerimeterWse, WseEstimator
 from eo_water_volume.outputs import write_geotiff
 from eo_water_volume.sources import LocalFileSource
-from eo_water_volume.volume import summarize, volume_map, wse_from_perimeter
+from eo_water_volume.volume import summarize, volume_map
 
 # --- config -----------------------------------------------------------------
 REPO = Path(__file__).resolve().parents[1]
@@ -109,7 +110,7 @@ def analyze(
     dem_path: Path,
     aoi_geom: dict,
     out_dir: Path,
-    gauge_reading: GaugeReading | None = None,
+    estimator: WseEstimator | None = None,
 ) -> dict:
     """Volume, depth, and water-fraction products within the AOI polygon.
 
@@ -141,28 +142,21 @@ def analyze(
 
     water_aoi = np.where(inside, water, 0.0)
 
-    # Perimeter WSE is always computed -- as the estimate when no gauge is
-    # given, and as a reported diagnostic when one is (the gauge-perimeter
-    # gap is itself a data-quality signal).
-    wse_perimeter = wse_from_perimeter(bed, water_aoi)
-    if gauge_reading is not None:
-        wse = gauge_reading.wse_navd88_m
-        wse_method = (
-            f"gauge {gauge_reading.station} @ {gauge_reading.time_utc.isoformat()} "
-            f"({gauge_reading.stage_ft} ft NAVD88)"
-        )
-    else:
-        wse = wse_perimeter
-        wse_method = "mask-perimeter median (gauge stage pending, M3)"
+    # The WSE method is a swappable estimator; PerimeterWse is the
+    # self-contained default. Every estimator names itself and carries its
+    # diagnostics (e.g. the gauge-perimeter gap) into stats and provenance.
+    wse_field = (estimator or PerimeterWse()).estimate(
+        bed, water_aoi, when_utc=overpass_time_utc(wtr_path)
+    )
+    wse = wse_field.values
+    wse_method = wse_field.method
     stats = summarize(bed, water_aoi, wse, pixel_area, invalid=(invalid & inside))
     # Honest denominators: fraction of *AOI* pixels the sensor couldn't see,
     # not fraction of the whole scene (which dilutes the metric).
     stats["invalid_fraction_aoi"] = float(invalid[inside].mean())
     stats["aoi_pixel_share_of_scene"] = float(inside.mean())
-    stats["wse_perimeter_m"] = float(wse_perimeter)
-    stats["wse_gauge_minus_perimeter_m"] = (
-        float(wse - wse_perimeter) if gauge_reading is not None else None
-    )
+    stats.update(wse_field.summary_stats())
+    stats.update(wse_field.diagnostics)
 
     # --- three products, shared nodata semantics -----------------------------
     NODATA = -9999.0
@@ -189,6 +183,10 @@ def analyze(
     }
     products = {
         "volume": (vmap, "water_volume_m3", "m^3"),
+        "depth": (depth, "water_fraction" if False else "water_volume_m3", "m^3"),
+    }
+    products = {
+        "volume": (vmap, "water_volume_m3", "m^3"),
         "depth": (depth, "water_depth_m", "m"),
         "water": (frac, "water_fraction", "fraction"),
     }
@@ -211,14 +209,15 @@ def main() -> None:
     aoi_geom, aoi_bbox = load_aoi()
     print(f"AOI bbox (search only): {aoi_bbox.as_bbox()}")
     wtr_path = fetch(aoi_bbox)
-    # Fetch the gauge reading here so analyze() stays pure-local and the
+    # Build the estimator here so analyze() stays pure-local and the
     # try/except guards exactly one fallible thing: the CDEC network call.
-    reading: GaugeReading | None = None
+    estimator: WseEstimator = PerimeterWse()
     try:
         reading = CdecStation().wse_navd88_m(overpass_time_utc(wtr_path))
+        estimator = GaugeWse(reading)
     except (OSError, LookupError) as err:
         print(f"WARNING: gauge unavailable ({err}); falling back to perimeter WSE")
-    stats = analyze(wtr_path, DEM_PATH, aoi_geom, OUTPUT_DIR, gauge_reading=reading)
+    stats = analyze(wtr_path, DEM_PATH, aoi_geom, OUTPUT_DIR, estimator=estimator)
     print("\n--- Yolo Bypass volume ---")
     for k, v in stats.items():
         print(f"  {k:24s} {v}")
