@@ -62,14 +62,18 @@ def test_registry_keys_match_model_ids():
 
 def test_every_concrete_estimator_is_registered():
     # Adding an estimator without registering it (and documenting it in
-    # MODELS.md) should fail CI, not drift silently.
+    # MODELS.md) should fail CI, not drift silently. Walks subclasses
+    # recursively (v2 is a grandchild of the ABC) and requires each class
+    # to DECLARE its own MODEL_ID, not inherit its parent's.
     from eo_water_volume.wse import MODEL_REGISTRY, WseEstimator
 
-    concrete = {
-        c for c in WseEstimator.__subclasses__() if getattr(c, "MODEL_ID", None)
-    }
+    def walk(cls):
+        for c in cls.__subclasses__():
+            yield c
+            yield from walk(c)
+
+    concrete = {c for c in walk(WseEstimator) if "MODEL_ID" in vars(c)}
     assert concrete == set(MODEL_REGISTRY.values())
-    assert all(hasattr(c, "MODEL_ID") for c in WseEstimator.__subclasses__())
 
 
 def _tilted_valley(n=400):

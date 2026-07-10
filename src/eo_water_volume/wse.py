@@ -160,6 +160,14 @@ class ShorelineProfileWse(WseEstimator):
         self.bin_rows = bin_rows
         self.min_bin_samples = min_bin_samples
 
+    def _samples(self, bed, wet, region):
+        shore = self._shoreline(bed, wet, region)
+        rows_idx, _ = np.nonzero(shore)
+        return rows_idx, bed[shore]
+
+    def _filter_bins(self, centers, medians):
+        return centers, medians  # v1: no bin filtering
+
     def _shoreline(self, bed, wet, region):
         dry_inside = (~wet) & region
         near_dry = np.zeros_like(wet)
@@ -175,9 +183,7 @@ class ShorelineProfileWse(WseEstimator):
         wet = np.asarray(water, dtype="float64") > 0.5
         region = np.ones_like(wet) if region is None else np.asarray(region, dtype=bool)
 
-        shore = self._shoreline(bed, wet, region)
-        rows_idx, _ = np.nonzero(shore)
-        samples = bed[shore]
+        rows_idx, samples = self._samples(bed, wet, region)
         if samples.size < self.min_bin_samples:
             raise ValueError(
                 f"Only {samples.size} shoreline samples; cannot fit a profile."
@@ -197,8 +203,11 @@ class ShorelineProfileWse(WseEstimator):
                 f"Only {len(centers)} populated profile bin(s); need >= 2 "
                 "(shoreline too sparse for a tilt -- use PerimeterWse/GaugeWse)."
             )
-        centers = np.asarray(centers)
-        medians = np.asarray(medians)
+        centers, medians = self._filter_bins(
+            np.asarray(centers, dtype="float64"), np.asarray(medians)
+        )
+        if len(centers) < 2:
+            raise ValueError("Fewer than 2 bins survived filtering.")
         if len(medians) >= 3:  # light smoothing: 3-bin moving average, edges kept
             sm = medians.copy()
             sm[1:-1] = (medians[:-2] + medians[1:-1] + medians[2:]) / 3.0
@@ -246,6 +255,77 @@ class ShorelineProfileWse(WseEstimator):
         )
 
 
+class ShorelineProfileWseV2(ShorelineProfileWse):
+    """wse-profile-v2: shoreline profile with contamination filters.
+
+    v1's measured failure on the 2026-01-15 Yolo scene (self-check -0.87 m,
+    residual MAD 0.33 m, span -1.7..+7.3 m) traced to (a) fake shorelines at
+    the rims of dry HOLES inside open water (SAR wind-roughening misses) that
+    sample subaqueous bed, and (b) steep bank pixels. v2 adds three filters:
+
+      solid-dry     a dry neighbor only qualifies if its (2r+1)^2 window is
+                    substantially dry (default 0.4: a straight-shore dry
+                    pixel sees ~0.5; a 2x2 hole rim sees ~0.08)
+      bed-slope     samples on locally steep bed (banks, levee faces) are
+                    dropped
+      bin clamp     bins farther than bin_clamp_m from the cross-bin median
+                    are dropped (kills any surviving rogue rows)
+    """
+
+    MODEL_ID = "wse-profile-v2"
+
+    def __init__(
+        self,
+        *,
+        dry_window: int = 3,
+        min_dry_fraction: float = 0.4,
+        max_bed_slope_m_per_m: float = 0.05,
+        bin_clamp_m: float = 1.5,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.dry_window = dry_window
+        self.min_dry_fraction = min_dry_fraction
+        self.max_bed_slope_m_per_m = max_bed_slope_m_per_m
+        self.bin_clamp_m = bin_clamp_m
+
+    @staticmethod
+    def _box_fraction(mask: np.ndarray, r: int) -> np.ndarray:
+        """Fraction of True in a (2r+1)^2 window, via an integral image."""
+        m = mask.astype("float64")
+        pad = np.pad(m, ((r + 1, r), (r + 1, r)))
+        ii = pad.cumsum(0).cumsum(1)
+        w = 2 * r + 1
+        s = ii[w:, w:] - ii[:-w, w:] - ii[w:, :-w] + ii[:-w, :-w]
+        return s / (w * w)
+
+    def _samples(self, bed, wet, region):
+        dry_inside = (~wet) & region
+        solid = dry_inside & (
+            self._box_fraction(dry_inside, self.dry_window) >= self.min_dry_fraction
+        )
+        near_solid = np.zeros_like(wet)
+        near_solid[:-1, :] |= solid[1:, :]
+        near_solid[1:, :] |= solid[:-1, :]
+        near_solid[:, :-1] |= solid[:, 1:]
+        near_solid[:, 1:] |= solid[:, :-1]
+        shore = wet & region & near_solid & np.isfinite(bed)
+
+        bed_f = np.where(np.isfinite(bed), bed, np.nan)
+        gy, gx = np.gradient(bed_f)
+        slope = np.hypot(gy, gx) / self.pixel_size_m
+        gentle = slope <= self.max_bed_slope_m_per_m  # NaN slope -> False
+        shore &= gentle
+
+        rows_idx, _ = np.nonzero(shore)
+        return rows_idx, np.asarray(bed)[shore]
+
+    def _filter_bins(self, centers, medians):
+        mid = np.median(medians)
+        keep = np.abs(medians - mid) <= self.bin_clamp_m
+        return centers[keep], medians[keep]
+
+
 # --- model registry -----------------------------------------------------------
 # Single machine-readable source of truth for WSE-estimator identity. The
 # human-readable companion is MODELS.md at the repo root (table of
@@ -256,4 +336,5 @@ MODEL_REGISTRY: dict[str, type[WseEstimator]] = {
     PerimeterWse.MODEL_ID: PerimeterWse,
     GaugeWse.MODEL_ID: GaugeWse,
     ShorelineProfileWse.MODEL_ID: ShorelineProfileWse,
+    ShorelineProfileWseV2.MODEL_ID: ShorelineProfileWseV2,
 }
