@@ -128,9 +128,6 @@ def main() -> None:
     except Exception as e:  # enrichment must never break the check
         print(f"calc_inundation     : unavailable ({e})")
 
-    print("\ninterpretation: spilling -> expect broad floodplain inundation in the")
-    print("mask; not spilling and weeks since last spill -> expect the perennial")
-    print("Toe Drain channel + tidal south pattern (the Jan 15 2026 map).")
     if state["spilling"]:
         regime = "SPILLING -- expect broad floodplain inundation"
     elif state["days_since_spill"] is not None and state["days_since_spill"] <= 14:
