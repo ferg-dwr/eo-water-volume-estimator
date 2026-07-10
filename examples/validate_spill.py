@@ -131,15 +131,19 @@ def main() -> None:
     print("\ninterpretation: spilling -> expect broad floodplain inundation in the")
     print("mask; not spilling and weeks since last spill -> expect the perennial")
     print("Toe Drain channel + tidal south pattern (the Jan 15 2026 map).")
+    if state["spilling"]:
+        regime = "SPILLING -- expect broad floodplain inundation"
+    elif state["days_since_spill"] is not None and state["days_since_spill"] <= 14:
+        regime = (
+            f"RECESSION -- spill ended {state['days_since_spill']} d ago; expect "
+            "elevated stages, inundated vegetation, intermediate wet share"
+        )
+    else:
+        regime = "BASEFLOW -- expect perennial Toe Drain + tidal south only"
+    print(f"\nregime: {regime}")
     if args.wet_km2 is not None:
         share = args.wet_km2 / 243.9
-        flag = (
-            "CONSISTENT"
-            if (state["spilling"] == (share > 0.5))
-            or (not state["spilling"] and share <= 0.5)
-            else "CHECK: regime and wet share disagree"
-        )
-        print(f"wet area {args.wet_km2:.1f} km2 = {share:.0%} of the bypass -> {flag}")
+        print(f"wet area {args.wet_km2:.1f} km2 = {share:.0%} of the bypass")
 
 
 if __name__ == "__main__":
