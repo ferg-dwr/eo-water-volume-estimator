@@ -39,8 +39,8 @@ from eo_water_volume.wse import (
     GaugeWse,
     PerimeterWse,
     ShorelineProfileWse,
-    WseEstimator,
     ShorelineProfileWseV2,
+    WseEstimator,
 )
 
 # --- config -----------------------------------------------------------------
