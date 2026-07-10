@@ -149,3 +149,26 @@ def test_profile_requires_gauge_row_when_anchored():
     r = GaugeReading("LIS", datetime(2026, 1, 15, 2, tzinfo=timezone.utc), 13.31, 4.057)
     with pytest.raises(ValueError):
         ShorelineProfileWse(anchor=r)
+
+
+def test_profile_v2_survives_in_pool_dry_holes():
+    # Reproduces v1's real-world failure: dry holes inside open water (SAR
+    # wind-roughening misses) create fake shorelines sampling subaqueous bed.
+    from eo_water_volume.wse import ShorelineProfileWse, ShorelineProfileWseV2
+
+    bed, water, true_wse = _tilted_valley()
+    rng = np.random.default_rng(7)
+    holes = np.zeros(bed.shape, bool)
+    for _ in range(60):
+        r0, c0 = rng.integers(150, 400), rng.integers(150, 260)
+        holes[r0 : r0 + 2, c0 : c0 + 2] = True
+    water_holed = np.where(holes, 0.0, water)
+    region = np.ones(bed.shape, bool)
+
+    f1 = ShorelineProfileWse().estimate(bed, water_holed, region=region)
+    f2 = ShorelineProfileWseV2().estimate(bed, water_holed, region=region)
+    e1 = np.abs(np.asarray(f1.values)[:, 0] - true_wse)
+    e2 = np.abs(np.asarray(f2.values)[:, 0] - true_wse)
+    assert e1.max() > 0.15  # v1 is visibly corrupted
+    assert e2.max() < 0.06  # v2 recovers the true surface
+    assert f2.diagnostics["profile_n_samples"] < f1.diagnostics["profile_n_samples"]

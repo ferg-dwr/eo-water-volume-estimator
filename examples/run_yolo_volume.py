@@ -40,6 +40,7 @@ from eo_water_volume.wse import (
     PerimeterWse,
     ShorelineProfileWse,
     WseEstimator,
+    ShorelineProfileWseV2,
 )
 
 # --- config -----------------------------------------------------------------
@@ -291,13 +292,10 @@ def main() -> None:
     estimators: list[WseEstimator] = [PerimeterWse()]
     try:
         reading = CdecStation().wse_navd88_m(overpass_time_utc(wtr_path))
+        g_row = gauge_row_for(wtr_path, LIS_LON, LIS_LAT)
         estimators.append(GaugeWse(reading))
-        estimators.append(
-            ShorelineProfileWse(
-                anchor=reading,
-                gauge_row=gauge_row_for(wtr_path, LIS_LON, LIS_LAT),
-            )
-        )
+        estimators.append(ShorelineProfileWse(anchor=reading, gauge_row=g_row))
+        estimators.append(ShorelineProfileWseV2(anchor=reading, gauge_row=g_row))
     except (OSError, LookupError) as err:
         print(f"WARNING: gauge unavailable ({err}); running perimeter model only")
 
