@@ -206,14 +206,8 @@ download API, so either side can evolve independently.
 
 ## Status
 
-<<<<<<< HEAD
 **v0.3.0.** Working end to end with gauge-anchored WSE, a four-model
 registry, per-pixel uncertainty, a season-scale batch runner, and two
 independent external validations. Next: SWOT altimetry (validating the
 water-surface *shape* a single gauge cannot), an exploration notebook, and a
 software paper.
-=======
-Early development (v0.x). Working end to end; next milestones: gauge-based
-water levels, quantitative validation against DWR's inundation tooling, SWOT
-altimetry, and toolkit integration.
->>>>>>> f763ae122ab9a78ad49374a4f0b2dc8f5ade0371
