@@ -220,10 +220,17 @@ def analyze(
     if est.MODEL_ID == PerimeterWse.MODEL_ID:
         unc_spread = np.zeros_like(vmap)
     else:
-        perim_field = PerimeterWse().estimate(bed, water_aoi)
-        unc_spread = np.abs(
-            vmap - volume_map(bed, water_aoi, perim_field.values, pixel_area)
-        )
+        try:
+            perim_field = PerimeterWse().estimate(bed, water_aoi)
+            unc_spread = np.abs(
+                vmap - volume_map(bed, water_aoi, perim_field.values, pixel_area)
+            )
+        except ValueError:
+            # No usable shoreline -> no method comparison possible. Zero is
+            # honest only because such scenes carry the story in the OTHER
+            # terms (typically invalid-pixel bounds); flagged in stats.
+            unc_spread = np.zeros_like(vmap)
+            stats["unc_method_spread_available"] = False
 
     unc = combine(unc_partial, unc_invalid, unc_wse, unc_spread)
     stats.update(
