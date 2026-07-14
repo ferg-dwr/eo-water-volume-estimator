@@ -7,7 +7,7 @@ demand.
 
 from .volume import estimate_volume, summarize, volume_map, wse_from_perimeter
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = [
     "estimate_volume",
     "wse_from_perimeter",
