@@ -9,9 +9,11 @@ First run downloads one granule to DOWNLOAD_DIR; later runs reuse it.
 
 The AOI polygon (not just its bbox) clips the analysis: the bbox is used only
 for the data search, so river water outside the bypass never pollutes the
-volume. WSE is anchored to the nearest CDEC LIS gauge reading (NAVD88) at the
-granule's sensing time; the mask-perimeter estimate is kept as a reported
-diagnostic and as a loud, labeled fallback when the gauge is unreachable.
+volume. Every registered WSE model runs on the scene -- perimeter always;
+gauge, shoreline-profile v1, and v2 when CDEC answers -- printing a method
+comparison. The gauge-anchored flat pool remains the PRIMARY result (the
+profile models are experimental pending their self-check gate); perimeter is
+the loud, labeled fallback when the gauge is unreachable.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from eo_water_volume.uncertainty import (
     partial_fraction_term,
     wse_distance_term,
 )
-from eo_water_volume.volume import summarize, volume_map
+from eo_water_volume.volume import perimeter_invalid_fraction, summarize, volume_map
 from eo_water_volume.wse import (
     GaugeWse,
     PerimeterWse,
@@ -188,6 +190,9 @@ def analyze(
     stats["invalid_fraction_aoi"] = float(invalid[inside].mean())
     stats["aoi_pixel_share_of_scene"] = float(inside.mean())
     stats["wse_model_id"] = est.MODEL_ID
+    stats["wse_perimeter_invalid_fraction"] = perimeter_invalid_fraction(
+        water_aoi, invalid & inside
+    )
     stats.update(wse_field.summary_stats())
     stats.update(wse_field.diagnostics)
 

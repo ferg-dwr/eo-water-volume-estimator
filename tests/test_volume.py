@@ -109,3 +109,28 @@ def test_wse_grid_tilted_plane_analytical():
     s = summarize(bed, water, wse, 900.0)
     assert abs(s["wse_m"] - 3.0) < 1e-12
     assert s["volume_m3"] == v
+
+
+def test_perimeter_invalid_fraction():
+    from eo_water_volume.volume import perimeter_invalid_fraction
+
+    water = np.zeros((7, 7))
+    water[2:5, 2:5] = 1.0  # 3x3 pool: boundary = its ring of 8
+    invalid = np.zeros((7, 7), bool)
+
+    # clean scene: shoreline exists, none of it touches invalid
+    assert perimeter_invalid_fraction(water, invalid) == 0.0
+
+    # one blind pixel hugging the pool's east edge corrupts the adjacent
+    # boundary pixel(s): 1 of the 8 boundary pixels flags
+    invalid[3, 5] = True
+    f = perimeter_invalid_fraction(water, invalid)
+    assert abs(f - 1.0 / 8.0) < 1e-12
+
+    # blind pixel far from any shoreline changes nothing
+    invalid2 = np.zeros((7, 7), bool)
+    invalid2[0, 0] = True
+    assert perimeter_invalid_fraction(water, invalid2) == 0.0
+
+    # no water at all -> None ("not assessable"), never 0.0
+    assert perimeter_invalid_fraction(np.zeros((5, 5)), invalid2) is None

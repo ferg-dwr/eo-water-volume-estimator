@@ -143,3 +143,38 @@ def volume_map(
     frac[~np.isfinite(frac)] = 0.0
 
     return pixel_area * frac * depth
+
+
+def perimeter_invalid_fraction(water: np.ndarray, invalid: np.ndarray) -> float | None:
+    """Share of the mask shoreline whose 4-neighborhood touches invalid pixels.
+
+    The perimeter-WSE family samples bed elevation along the wet/dry
+    boundary; a sensor-blind (invalid) pixel adjacent to that boundary means
+    the boundary there may not be a real shoreline at all (the water could
+    continue under the blind spot). The scene-level invalid fraction can be
+    tiny while the SHORELINE share is large -- this metric reports the share
+    that actually matters for perimeter sampling.
+
+    Returns None when there is no shoreline to assess.
+    """
+    wet = np.asarray(water, dtype="float64") > 0.5
+    inv = np.asarray(invalid, dtype=bool)
+
+    dry_neighbour = np.zeros_like(wet)
+    dry_neighbour[:-1, :] |= ~wet[1:, :]
+    dry_neighbour[1:, :] |= ~wet[:-1, :]
+    dry_neighbour[:, :-1] |= ~wet[:, 1:]
+    dry_neighbour[:, 1:] |= ~wet[:, :-1]
+    edge = np.zeros_like(wet)
+    edge[0, :] = edge[-1, :] = edge[:, 0] = edge[:, -1] = True
+    boundary = wet & (dry_neighbour | edge)
+    if not boundary.any():
+        return None
+
+    inv_neighbour = inv.copy()
+    inv_neighbour[:-1, :] |= inv[1:, :]
+    inv_neighbour[1:, :] |= inv[:-1, :]
+    inv_neighbour[:, :-1] |= inv[:, 1:]
+    inv_neighbour[:, 1:] |= inv[:, :-1]
+
+    return float((boundary & inv_neighbour).sum() / boundary.sum())
