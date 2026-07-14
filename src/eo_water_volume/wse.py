@@ -108,7 +108,13 @@ class GaugeWse(WseEstimator):
 
     def estimate(self, bed, water, when_utc=None, region=None) -> WseField:
         r = self.reading
-        perim = wse_from_perimeter(bed, water)
+        # The perimeter comparison is a DIAGNOSTIC; scenes with no usable
+        # shoreline (partial tile coverage, all-wet AOI) must not kill a
+        # gauge run whose answer needs no shoreline. Fails soft to None.
+        try:
+            perim = wse_from_perimeter(bed, water)
+        except ValueError:
+            perim = None
         return WseField(
             values=r.wse_navd88_m,
             method=(
@@ -117,7 +123,9 @@ class GaugeWse(WseEstimator):
             ),
             diagnostics={
                 "wse_perimeter_m": perim,
-                "wse_gauge_minus_perimeter_m": r.wse_navd88_m - perim,
+                "wse_gauge_minus_perimeter_m": (
+                    r.wse_navd88_m - perim if perim is not None else None
+                ),
                 "gauge_station": r.station,
                 "gauge_time_utc": r.time_utc.isoformat(),
             },

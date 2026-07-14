@@ -265,6 +265,7 @@ def analyze(
         "source_granule": wtr_path.name,
         "dem": dem_path.name,
     }
+    common_tags = {k: v for k, v in common_tags.items() if v is not None}
     products = {
         "volume": (vmap, "water_volume_m3", "m^3"),
         "depth": (depth, "water_depth_m", "m"),

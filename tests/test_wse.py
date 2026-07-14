@@ -172,3 +172,16 @@ def test_profile_v2_survives_in_pool_dry_holes():
     assert e1.max() > 0.15  # v1 is visibly corrupted
     assert e2.max() < 0.06  # v2 recovers the true surface
     assert f2.diagnostics["profile_n_samples"] < f1.diagnostics["profile_n_samples"]
+
+
+def test_gauge_diagnostics_fail_soft_without_shoreline():
+    # A scene with no usable shoreline -- e.g. no water detected at all
+    # (partial tile coverage over dry land) -- must not kill a gauge run:
+    # the estimate needs no shoreline, only the diagnostic does. It reports
+    # None instead of raising (the 2026-01-26 14:07Z batch failure).
+    no_water = np.zeros((10, 10))
+    bed = np.zeros((10, 10))
+    f = GaugeWse(_reading()).estimate(bed, no_water)
+    assert f.values == 4.057
+    assert f.diagnostics["wse_perimeter_m"] is None
+    assert f.diagnostics["wse_gauge_minus_perimeter_m"] is None
