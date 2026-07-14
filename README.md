@@ -14,7 +14,7 @@ decision-support tooling. No remote-sensing background is assumed below.
 
 ---
 
-## The idea, in plain language
+## The idea
 
 Think of the Yolo Bypass as a giant, oddly-shaped bathtub.
 
