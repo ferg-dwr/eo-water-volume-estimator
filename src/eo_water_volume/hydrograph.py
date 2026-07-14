@@ -65,13 +65,14 @@ def plot_hydrograph(
     `envelope=True` shades volume +/- the conservative uncertainty budget
     (a labeled envelope, not a confidence interval -- see uncertainty.py).
     """
+
+    if not scenes:
+        raise ValueError("No scenes to plot.")
     try:
         import matplotlib.pyplot as plt
     except ImportError as err:  # pragma: no cover - exercised without extra
         raise ImportError('plotting needs matplotlib: pip install -e ".[viz]"') from err
 
-    if not scenes:
-        raise ValueError("No scenes to plot.")
     scale = 1 / 1233.4818375475 if acre_feet else 1e-6
     unit = "acre-feet" if acre_feet else "million m$^3$"
     t = [s.time_utc for s in scenes]
